@@ -18,7 +18,7 @@
  $DB_DSN="";  #if DB_DSN set - connect to ADO will be used instead HOST/PORT...
 
 //constants
- $VERSION=1.3;
+ $VERSION='1.3.061101';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $is_limited_sql=0;
 
@@ -43,7 +43,9 @@ function kill_magic_quotes($value){
 }
 
  //get initial values
- if ($_REQUEST['db']) $DB_DBNAME=$_REQUEST['db'];
+ $rdb=$_REQUEST['db'];
+ if ($rdb=='*') $rdb='';
+ if ($rdb) $DB_DBNAME=$rdb;
  $SQLq=trim($_REQUEST['q']);
  $page=$_REQUEST['p']+0;
  if ($_REQUEST['refresh'] && $DB_DBNAME && !$SQLq) $SQLq="show tables";
@@ -59,15 +61,33 @@ function kill_magic_quotes($value){
  if ($_REQUEST['logoff']){
     $_SESSION = array();
     session_destroy();
-    header('location: '.$_SERVER['PHP_SELF']);
+    $url=$_SERVER['PHP_SELF'];
+    if (!$ACCESS_PWD) $url='/';
+    header("location: $url");
  }
 
  if ($_SESSION['is_logged']){
-    if ($DB_DBNAME){
-       perform_sql($SQLq,$page);
+    $time_start=microtime_float();
+
+    if ($_REQUEST['phpinfo']){
+       ob_start();
+       phpinfo();
+       $sqldr=ob_get_clean();
+    }elseif ($_REQUEST['dp'] && $DB_DBNAME){
+       perform_dump_db();
+    }elseif ($_REQUEST['ex'] && $DB_DBNAME){
+       perform_export_db();
+    }elseif ($_REQUEST['ext'] && $DB_DBNAME){
+       perform_export_table($_REQUEST['ext']);
     }else{
-       $err_msg="Select DB first";
+       if ($DB_DBNAME){
+          perform_sql($SQLq,$page);
+       }else{
+          $err_msg="Select DB first";
+       }
     }
+    $time_all=ceil((microtime_float()-$time_start)*10000)/10000;
+
     print_screen();
  }else{
     print_login();
@@ -76,11 +96,9 @@ function kill_magic_quotes($value){
 //**************** functions
 
 function perform_sql($q, $page=0){
- global $dbh, $DB_DBNAME, $out_message, $sqldr, $reccount, $time_all, $MAX_ROWS_PER_PAGE, $is_limited_sql;
+ global $dbh, $DB_DBNAME, $out_message, $sqldr, $reccount, $MAX_ROWS_PER_PAGE, $is_limited_sql;
  $rc=array("o","e");
 
- $time_start=microtime_float();
- 
  if (preg_match("/^select|show|explain/i",$q)){
     $sql=$q;
     $is_show_tables=($q=='show tables');
@@ -98,26 +116,31 @@ function perform_sql($q, $page=0){
        $reccount=mysql_num_rows($sth);
        $fields_num=mysql_num_fields($sth);
  
-       $sqldr="<table border='0' cellpadding='1' cellspacing='1' width='100%' class='res'>";
+       $w="width='100%' ";
+       if ($is_show_tables) $w='';
+       $sqldr="<table border='0' cellpadding='1' cellspacing='1' $w class='res'>";
        $headers="<tr class='h'>";
        for($i=0;$i<$fields_num;$i++){
           $meta=mysql_fetch_field($sth,$i);
           $fnames[$i]=$meta->name;
           $headers.="<th>$fnames[$i]</th>";
        }
+       if ($is_show_tables) $headers.="<th>show create table</th><th>explain</th><th>indexes</th><th>export</th>";
        $headers.="</tr>\n";
        $sqldr.=$headers;
        $swapper=false;
        while($hf=mysql_fetch_assoc($sth)){
          $sqldr.="<tr class='".$rc[$swp=!$swp]."'>";
          for($i=0;$i<$fields_num;$i++){
-            $v=$hf[$fnames[$i]];
+            $v=$hf[$fnames[$i]];$more='';
             if ($is_show_tables && $i==0 && $v){
-               $v="<a href=\"?db=$DB_DBNAME&q=show+create+table+$v\">$v</a>";
+               $v="<a href=\"?db=$DB_DBNAME&q=select+*+from+$v\">$v</a>".
+               $more="<td>&#183;<a href=\"?db=$DB_DBNAME&q=show+create+table+$v\">sct</a></td>"
+               ."<td>&#183;<a href=\"?db=$DB_DBNAME&q=explain+$v\">exp</a></td>"
+               ."<td>&#183;<a href=\"?db=$DB_DBNAME&q=show+index+from+$v\">ind</a></td>"
+               ."<td>&#183;<a href=\"?db=$DB_DBNAME&ext=$v\">e</a></td>";
             }
-            if ($is_show_crt) {
-               $v="<pre>$v</pre>";
-            }
+            if ($is_show_crt) $v="<pre>$v</pre>";
             $sqldr.="<td>$v".(!v?"<br />":'')."</td>";
          }
          $sqldr.="</tr>\n";
@@ -139,8 +162,63 @@ function perform_sql($q, $page=0){
  }else{
     $out_message="Please type in right SQL statements";
  }
- $time_all=ceil((microtime_float()-$time_start)*10000)/10000;
- 
+
+}
+
+function perform_dump_db(){
+ global $DB_DBNAME, $sqldr, $reccount;
+
+ $sth=db_query("show tables from $DB_DBNAME");
+ while( $row=mysql_fetch_row($sth) ){
+   $sth2=db_query("show create table `$row[0]`");
+   $row2=mysql_fetch_row($sth2);
+   $sqldr.="$row2[1];\n\n";
+   $reccount++;
+ }
+
+ $sqldr="<pre>$sqldr</pre>";
+}
+
+function perform_export_db(){
+ global $DB_DBNAME;
+
+ $dr='';
+
+ $sth=db_query("show tables from $DB_DBNAME");
+ while( $row=mysql_fetch_row($sth) ){
+   $dr.=perform_export_table($row[0],1)."\n";
+ }
+
+ header('Content-type: text/plain');
+ header("Content-Disposition: attachment; filename=\"$DB_DBNAME.sql\"");
+
+ echo $dr;
+ exit;
+}
+
+function perform_export_table($t='',$isvar=0){
+ global $dbh;
+ $dr='';
+
+ $sth=db_query("select * from `$t`");
+ while( $row=mysql_fetch_row($sth) ){
+   $values='';
+   foreach($row as $value){
+     $values.=(($values)?',':'')."'".mysql_real_escape_string($value,$dbh)."'";
+   }
+
+   $dr.="INSERT INTO `$t` VALUES ($values);\n";
+ }
+
+ if ($isvar){
+    return $dr;
+ }else{
+    header('Content-type: text/plain');
+    header("Content-Disposition: attachment; filename=\"$t.sql\"");
+   
+    echo $dr;
+    exit;
+ }
 }
 
 function print_header(){
@@ -210,14 +288,17 @@ function go(p,sql){
 <? if ($_SESSION['is_logged']){ ?>
  | 
 Database: <select name="db" onChange="frefresh()">
-<option value=''> - select -
+<option value='*'> - select/refresh -
 <?=get_db_select($DB_DBNAME)?>
 </select>
 <? if($DB_DBNAME){ ?>
  &#183;<a href="<?=$_SERVER['PHP_SELF']?>?db=<?=$DB_DBNAME?>&q=show+tables">show tables</a>
+ &#183;<a href="<?=$_SERVER['PHP_SELF']?>?db=<?=$DB_DBNAME?>&dp=1">dump structure</a>
+ &#183;<a href="<?=$_SERVER['PHP_SELF']?>?db=<?=$DB_DBNAME?>&ex=1">export data</a>
 <? } ?>
  | <a href="?logoff=1">Logoff</a>
 <?} ?>
+ | <a href="?phpinfo=1">phpinfo</a>
 </div>
 
 <div class="err"><?=$err_msg?></div>
@@ -339,7 +420,7 @@ function get_identity($dbh1=NULL){
 
 function get_db_select($sel=''){
  $result='';
- if ($_SESSION['sql_show_databases']){//check cache
+ if ($_SESSION['sql_show_databases'] && !$_REQUEST['db']=='*'){//check cache
     $arr=$_SESSION['sql_show_databases'];
  }else{
    $sth=db_query("show databases");

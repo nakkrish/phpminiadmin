@@ -18,7 +18,7 @@
  $DB_DSN="";  #if DB_DSN set - connect to ADO will be used instead HOST/PORT...
 
 //constants
- $VERSION='1.3.061101';
+ $VERSION='1.3.061115';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $is_limited_sql=0;
 
@@ -81,7 +81,7 @@ function kill_magic_quotes($value){
        perform_export_table($_REQUEST['ext']);
     }else{
        if ($DB_DBNAME){
-          perform_sql($SQLq,$page);
+          if (!$_REQUEST['refresh'] || preg_match('/^select|show|explain/',$SQLq) ) perform_sql($SQLq,$page);  #perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
        }else{
           $err_msg="Select DB first";
        }
@@ -150,7 +150,7 @@ function perform_sql($q, $page=0){
 
  }
  elseif (preg_match("/^update|insert|delete|drop|truncate|alter|create/i",$q)){
-    $sth = db_query($q);
+    $sth = db_query($q, 0, 'noerr');
     if($sth==0){
        $out_message="Error ".mysql_error($dbh);
     }
@@ -275,6 +275,10 @@ function go(p,sql){
  if(sql)F.q.value=sql;
  F.submit();
 }
+function chksql(){
+ var F=document.DF;
+ if(/^\s*(?:delete|drop|truncate|alter)/.test(F.q.value)) return confirm('Are you sure to continue?');
+}
 </script>
 
 </head>
@@ -317,7 +321,7 @@ function print_screen(){
 <div style="width:500px;" align="left">
 SQL-query:<br />
 <textarea name="q" cols="70" rows="10"><?=$SQLq?></textarea>
-<input type=submit name="GoSQL" value="Go" style="width:100px">&nbsp;&nbsp;
+<input type=submit name="GoSQL" value="Go" onclick="return chksql()" style="width:100px">&nbsp;&nbsp;
 <input type=button name="Clear" value=" Clear " onClick="document.DF.q.value=''" style="width:100px">
 </div>
 </center>

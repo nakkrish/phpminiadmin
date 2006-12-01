@@ -2,23 +2,29 @@
 /*
  PHP Mini MySQL Admin
  (c) 2004-2006 Oleg Savchuk <osa@viakron.com>
+ Charset support - thanks to Alex Didok (http://www.main.com.ua)
 
  Light standalone PHP script for easy access MySQL databases.
+ http://phpminiadmin.sourceforge.net
 */
 
  $ACCESS_PWD=''; #script access password, SET IT if you want to protect script from public access
 
  #DEFAULT db connection settings
- $DB_DBNAME=""; #default DB, optional
- $DB_USER=""; #required
- $DB_PWD=""; #required
- $DB_HOST="";
- $DB_PORT="";
+ $DB=array(
+ 'user'=>"",#required
+ 'pwd'=>"", #required
+ 'db'=>"",  #default DB, optional
+ 'host'=>"",#optional
+ 'port'=>"",#optional
+ 'chset'=>"",#default charset, optional
+ );
 
 //constants
- $VERSION='1.3.061126';
+ $VERSION='1.3.061201';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $is_limited_sql=0;
+ $self=$_SERVER['PHP_SELF'];
 
  session_start();
 
@@ -28,8 +34,6 @@
 
 //strip quotes if they set
  if (get_magic_quotes_gpc()){
-  $_POST=array_map('killmq',$_POST);
-  $_GET=array_map('killmq',$_GET);
   $_COOKIE=array_map('killmq',$_COOKIE);
   $_REQUEST=array_map('killmq',$_REQUEST);
  }
@@ -51,7 +55,7 @@
  if ($_REQUEST['logoff']){
     $_SESSION = array();
     session_destroy();
-    $url=$_SERVER['PHP_SELF'];
+    $url=$self;
     if (!$ACCESS_PWD) $url='/';
     header("location: $url");
     exit;
@@ -76,7 +80,7 @@
  //get initial values
  $SQLq=trim($_REQUEST['q']);
  $page=$_REQUEST['p']+0;
- if ($_REQUEST['refresh'] && $DB_DBNAME && !$SQLq) $SQLq="show tables";
+ if ($_REQUEST['refresh'] && $DB['db'] && !$SQLq) $SQLq="show tables";
 
  if (db_connect('nodie')){
     $time_start=microtime_float();
@@ -85,14 +89,14 @@
        ob_start();
        phpinfo();
        $sqldr=ob_get_clean();
-    }elseif ($_REQUEST['dp'] && $DB_DBNAME){
+    }elseif ($_REQUEST['dp'] && $DB['db']){
        perform_dump_db();
-    }elseif ($_REQUEST['ex'] && $DB_DBNAME){
+    }elseif ($_REQUEST['ex'] && $DB['db']){
        perform_export_db();
-    }elseif ($_REQUEST['ext'] && $DB_DBNAME){
+    }elseif ($_REQUEST['ext'] && $DB['db']){
        perform_export_table($_REQUEST['ext']);
     }else{
-       if ($DB_DBNAME){
+       if ($DB['db']){
           if (!$_REQUEST['refresh'] || preg_match('/^select|show|explain/',$SQLq) ) perform_sql($SQLq,$page);  #perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
        }else{
           $err_msg="Select DB first";
@@ -108,8 +112,9 @@
 //**************** functions
 
 function perform_sql($q, $page=0){
- global $dbh, $DB_DBNAME, $out_message, $sqldr, $reccount, $MAX_ROWS_PER_PAGE, $is_limited_sql;
+ global $dbh, $DB, $out_message, $sqldr, $reccount, $MAX_ROWS_PER_PAGE, $is_limited_sql;
  $rc=array("o","e");
+ $dbn=$DB['db'];
 
  if (preg_match("/^select|show|explain/i",$q)){
     $sql=$q;
@@ -137,7 +142,7 @@ function perform_sql($q, $page=0){
           $fnames[$i]=$meta->name;
           $headers.="<th>$fnames[$i]</th>";
        }
-       if ($is_show_tables) $headers.="<th>show create table</th><th>explain</th><th>indexes</th><th>export</th>";
+       if ($is_show_tables) $headers.="<th>show create table</th><th>explain</th><th>indexes</th><th>export</th><th>drop</th><th>truncate</th>";
        $headers.="</tr>\n";
        $sqldr.=$headers;
        $swapper=false;
@@ -146,11 +151,13 @@ function perform_sql($q, $page=0){
          for($i=0;$i<$fields_num;$i++){
             $v=$hf[$fnames[$i]];$more='';
             if ($is_show_tables && $i==0 && $v){
-               $v="<a href=\"?db=$DB_DBNAME&q=select+*+from+$v\">$v</a>".
-               $more="<td>&#183;<a href=\"?db=$DB_DBNAME&q=show+create+table+$v\">sct</a></td>"
-               ."<td>&#183;<a href=\"?db=$DB_DBNAME&q=explain+$v\">exp</a></td>"
-               ."<td>&#183;<a href=\"?db=$DB_DBNAME&q=show+index+from+$v\">ind</a></td>"
-               ."<td>&#183;<a href=\"?db=$DB_DBNAME&ext=$v\">e</a></td>";
+               $v="<a href=\"?db=$dbn&q=select+*+from+$v\">$v</a>".
+               $more="<td>&#183;<a href=\"?db=$dbn&q=show+create+table+$v\">sct</a></td>"
+               ."<td>&#183;<a href=\"?db=$dbn&q=explain+$v\">exp</a></td>"
+               ."<td>&#183;<a href=\"?db=$dbn&q=show+index+from+$v\">ind</a></td>"
+               ."<td>&#183;<a href=\"?db=$dbn&ext=$v\">e</a></td>"
+               ."<td>&#183;<a href=\"?db=$dbn&q=drop+table+$v\" onclick='return ays()'>drop</a></td>"
+               ."<td>&#183;<a href=\"?db=$dbn&q=truncate+table+$v\" onclick='return ays()'>trunc</a></td>";
             }
             if ($is_show_crt) $v="<pre>$v</pre>";
             $sqldr.="<td>$v".(!v?"<br />":'')."</td>";
@@ -161,7 +168,7 @@ function perform_sql($q, $page=0){
     }
 
  }
- elseif (preg_match("/^update|insert|delete|drop|truncate|alter|create/i",$q)){
+ elseif (preg_match("/^update|insert|replace|delete|drop|truncate|alter|create/i",$q)){
     $sth = db_query($q, 0, 'noerr');
     if($sth==0){
        $out_message="Error ".mysql_error($dbh);
@@ -169,7 +176,8 @@ function perform_sql($q, $page=0){
     else{
        $reccount=mysql_affected_rows($dbh);
        $out_message="Done.";
-       if (preg_match("/^insert/i",$q)) $out_message.=" New inserted id=".get_identity();
+       if (preg_match("/^insert|replace/i",$q)) $out_message.=" New inserted id=".get_identity();
+       if (preg_match("/^drop|truncate/i",$q)) perform_sql("show tables");
     }
  }else{
     $out_message="Please type in right SQL statements";
@@ -178,9 +186,9 @@ function perform_sql($q, $page=0){
 }
 
 function perform_dump_db(){
- global $DB_DBNAME, $sqldr, $reccount;
+ global $DB, $sqldr, $reccount;
 
- $sth=db_query("show tables from $DB_DBNAME");
+ $sth=db_query("show tables from $DB[db]");
  while( $row=mysql_fetch_row($sth) ){
    $sth2=db_query("show create table `$row[0]`");
    $row2=mysql_fetch_row($sth2);
@@ -192,17 +200,17 @@ function perform_dump_db(){
 }
 
 function perform_export_db(){
- global $DB_DBNAME;
+ global $DB;
 
  $dr='';
 
- $sth=db_query("show tables from $DB_DBNAME");
+ $sth=db_query("show tables from $DB[db]");
  while( $row=mysql_fetch_row($sth) ){
    $dr.=perform_export_table($row[0],1)."\n";
  }
 
  header('Content-type: text/plain');
- header("Content-Disposition: attachment; filename=\"$DB_DBNAME.sql\"");
+ header("Content-Disposition: attachment; filename=\"$DB[db].sql\"");
 
  echo $dr;
  exit;
@@ -234,7 +242,8 @@ function perform_export_table($t='',$isvar=0){
 }
 
 function print_header(){
- global $err_msg,$VERSION,$DB_DBNAME,$dbh;
+ global $err_msg,$VERSION,$DB,$dbh,$self;
+ $dbn=$DB['db'];
 ?>
 <html>
 <head>
@@ -263,30 +272,33 @@ function go(p,sql){
  if(sql)F.q.value=sql;
  F.submit();
 }
+function ays(){
+ return confirm('Are you sure to continue?');
+}
 function chksql(){
  var F=document.DF;
- if(/^\s*(?:delete|drop|truncate|alter)/.test(F.q.value)) return confirm('Are you sure to continue?');
+ if(/^\s*(?:delete|drop|truncate|alter)/.test(F.q.value)) return ays();
 }
 </script>
 
 </head>
 <body>
-<form method="post" name="DF" action="<?=$_SERVER['PHP_SELF']?>">
+<form method="post" name="DF" action="<?=$self?>">
 <input type="hidden" name="refresh" value="">
 <input type="hidden" name="p" value="">
 
 <div class="inv">
-<b>phpMiniAdmin <?=$VERSION?></b>
+<a href="http://sourceforge.net/projects/phpminiadmin/" target="_blank"><b>phpMiniAdmin <?=$VERSION?></b></a>
 <? if ($_SESSION['is_logged'] && $dbh){ ?>
  | 
 Database: <select name="db" onChange="frefresh()">
 <option value='*'> - select/refresh -
-<?=get_db_select($DB_DBNAME)?>
+<?=get_db_select($dbn)?>
 </select>
-<? if($DB_DBNAME){ ?>
- &#183;<a href="<?=$_SERVER['PHP_SELF']?>?db=<?=$DB_DBNAME?>&q=show+tables">show tables</a>
- &#183;<a href="<?=$_SERVER['PHP_SELF']?>?db=<?=$DB_DBNAME?>&dp=1">dump structure</a>
- &#183;<a href="<?=$_SERVER['PHP_SELF']?>?db=<?=$DB_DBNAME?>&ex=1">export data</a>
+<? if($dbn){ ?>
+ &#183;<a href="<?=$self?>?db=<?=$dbn?>&q=show+tables">show tables</a>
+ &#183;<a href="<?=$self?>?db=<?=$dbn?>&dp=1">dump structure</a>
+ &#183;<a href="<?=$self?>?db=<?=$dbn?>&ex=1">export data</a>
 <? } ?>
  | <a href="?showcfg=1">Settings</a> 
 <?} ?>
@@ -367,7 +379,7 @@ Password: <input type="password" name="pwd" value="">
 
 
 function print_cfg(){
- global $DB_DBNAME,$DB_HOST,$DB_USER,$DB_PWD,$err_msg;
+ global $DB,$err_msg,$self;
 
  print_header();
 ?>
@@ -375,13 +387,14 @@ function print_cfg(){
 <center>
 <h3>DB Connection Settings</h3>
 <div style="width:400px;border:1px solid #999999;background-color:#eeeeee;text-align:left">
-MySQL host: <input type="text" name="host" value="<?=$DB_HOST?>"> port: <input type="text" name="port" value="<?=$DB_PORT?>" size="4"><br />
-User name: <input type="text" name="user" value="<?=$DB_USER?>"><br />
-Password: <input type="password" name="pwd" value=""><br />
-DB name: <input type="text" name="db" value="<?=$DB_DBNAME?>"><br />
+User name: <input type="text" name="v[user]" value="<?=$DB['user']?>"><br />
+Password: <input type="password" name="v[pwd]" value=""><br />
+MySQL host: <input type="text" name="v[host]" value="<?=$DB['host']?>"> port: <input type="text" name="v[port]" value="<?=$DB['port']?>" size="4"><br />
+DB name: <input type="text" name="v[db]" value="<?=$DB['db']?>"><br />
+Charset: <select name="v[chset]"><option value="">- default -</option><?=chset_select($DB['chset'])?></select><br />
 <input type="checkbox" name="rmb" value="1" checked> Remember in cookies for 30 days
 <input type="hidden" name="savecfg" value="1">
-<input type="submit" value=" Apply "><input type="button" value=" Cancel " onclick="window.location='<?=$_SERVER['PHP_SELF']?>'">
+<input type="submit" value=" Apply "><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
 </div>
 </center>
 
@@ -392,19 +405,21 @@ DB name: <input type="text" name="db" value="<?=$DB_DBNAME?>"><br />
 
 //******* utilities
 function db_connect($nodie=0){
- global $dbh,$DB_DBNAME,$DB_HOST,$DB_PORT,$DB_USER,$DB_PWD,$err_msg;
+ global $dbh,$DB,$err_msg;
 
- $dbh=mysql_connect($DB_HOST.($DB_PORT?":$DB_PORT":''),$DB_USER,$DB_PWD);
+ $dbh=mysql_connect($DB['host'].($DB['port']?":$DB[port]":''),$DB['user'],$DB['pwd']);
  if (!$dbh) {
     $err_msg='Cannot connect to the database because: '.mysql_error();
     if (!$nodie) die($err_msg);
  }
 
- if ($dbh && $DB_DBNAME) {
-  $res=mysql_select_db($DB_DBNAME, $dbh);
+ if ($dbh && $DB['db']) {
+  $res=mysql_select_db($DB['db'], $dbh);
   if (!$res) {
      $err_msg='Cannot select db because: '.mysql_error();
      if (!$nodie) die($err_msg);
+  }else{
+     if ($DB['chset']) db_query("SET NAMES ".$DB['chset']);
   }
  }
 
@@ -434,6 +449,13 @@ function db_query($sql, $dbh1=NULL, $skiperr=0){
  return $sth;
 }
 
+function db_array($sql){#array of rows
+ $sth=db_query($sql);
+ $res=array();
+ while($row=mysql_fetch_assoc($sth)) $res[]=$row;
+ return $res;
+}
+
 function catch_db_err($dbh, $sth, $sql=""){
  if (!$sth) die("Error in DB operation:<br>\n".mysql_error($dbh)."<br>\n$sql");
 }
@@ -445,21 +467,34 @@ function get_identity($dbh1=NULL){
 
 function get_db_select($sel=''){
  $result='';
- if ($_SESSION['sql_show_databases'] && !$_REQUEST['db']=='*'){//check cache
-    $arr=$_SESSION['sql_show_databases'];
+ if ($_SESSION['sql_sd'] && !$_REQUEST['db']=='*'){//check cache
+    $arr=$_SESSION['sql_sd'];
  }else{
-   $sth=db_query("show databases");
-   $arr=array();
-   while(list($a)=mysql_fetch_row($sth)){
-     $arr[]=$a;
-   }
-   $_SESSION['sql_show_databases']=$arr;
+   $arr=db_array("show databases");
+   $_SESSION['sql_sd']=$arr;
  }
 
- foreach($arr as $a)
-     $result.="<option value='$a' ".($sel && $sel==$a?'selected':'').">$a</option>";
+ return sel($arr,'Database',$sel);
+}
 
- return $result;
+function chset_select($sel=''){
+ $result='';
+ if ($_SESSION['sql_chset']){
+    $arr=$_SESSION['sql_chset'];
+ }else{
+   $arr=db_array("show character set");
+   $_SESSION['sql_chset']=$arr;
+ }
+
+ return sel($arr,'Charset',$sel);
+}
+
+function sel($arr,$n,$sel=''){
+ foreach($arr as $a){
+   $b=$a[$n];
+   $res.="<option value='$b' ".($sel && $sel==$b?'selected':'').">$b</option>";
+ }
+ return $res;
 }
 
 function microtime_float(){
@@ -539,64 +574,49 @@ function killmq($value){
 }
 
 function savecfg(){
- $_SESSION['db']  =$_REQUEST['db']  ;
- $_SESSION['user']=$_REQUEST['user'];
- $_SESSION['pwd'] =$_REQUEST['pwd'] ;
- $_SESSION['host']=$_REQUEST['host'];
- $_SESSION['port']=$_REQUEST['port'];
+ $v=$_REQUEST['v'];
+ $_SESSION['DB']=$v;
 
  if ($_REQUEST['rmb']){
     $tm=time()+60*60*24*30;
-    setcookie("conn[db]",  $_REQUEST['db'],$tm);
-    setcookie("conn[user]",$_REQUEST['user'],$tm);
-    setcookie("conn[pwd]", $_REQUEST['pwd'],$tm);
-    setcookie("conn[host]",$_REQUEST['host'],$tm);
-    setcookie("conn[port]",$_REQUEST['port'],$tm);
+    setcookie("conn[db]",  $v['db'],$tm);
+    setcookie("conn[user]",$v['user'],$tm);
+    setcookie("conn[pwd]", $v['pwd'],$tm);
+    setcookie("conn[host]",$v['host'],$tm);
+    setcookie("conn[port]",$v['port'],$tm);
+    setcookie("conn[chset]",$v['chset'],$tm);
  }else{
     setcookie("conn[db]",  FALSE,-1);
     setcookie("conn[user]",FALSE,-1);
     setcookie("conn[pwd]", FALSE,-1);
     setcookie("conn[host]",FALSE,-1);
     setcookie("conn[port]",FALSE,-1);
+    setcookie("conn[chset]",FALSE,-1);
  }
 }
 
 //during login only - from cookies or use defaults;
 function loadcfg(){
- global $DB_DBNAME,$DB_HOST,$DB_PORT,$DB_USER,$DB_PWD;
+ global $DB;
 
  if( isset($_COOKIE['conn']) ){
     $a=$_COOKIE['conn'];
-    $_SESSION['db']=$a['db'];
-    $_SESSION['user']=$a['user'];
-    $_SESSION['pwd']=$a['pwd'];
-    $_SESSION['host']=$a['host'];
-    $_SESSION['port']=$a['port'];
+    $_SESSION['DB']=$_COOKIE['conn'];
  }else{
-    $_SESSION['db']=$DB_DBNAME;
-    $_SESSION['user']=$DB_USER;
-    $_SESSION['pwd']=$DB_PWD;
-    $_SESSION['host']=$DB_HOST;
-    $_SESSION['port']=$DB_PORT;
+    $_SESSION['DB']=$DB;
  }
 }
 
 //each time - from session to $DB_*
 function loadsess(){
- global $DB_DBNAME,$DB_HOST,$DB_PORT,$DB_USER,$DB_PWD;
+ global $DB;
 
- $isd=0;
+ $DB=$_SESSION['DB'];
+
  $rdb=$_REQUEST['db'];
  if ($rdb=='*') $rdb='';
  if ($rdb) {
-    $DB_DBNAME=$rdb;
-    $isd=1;
+    $DB['db']=$rdb;
  }
-
- if (!$isd) $DB_DBNAME=$_SESSION['db'];
- $DB_USER=$_SESSION['user'];
- $DB_PWD=$_SESSION['pwd'];
- $DB_HOST=$_SESSION['host'];
- $DB_PORT=$_SESSION['port'];
 }
 ?>

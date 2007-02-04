@@ -1,8 +1,8 @@
 <?php
 /*
  PHP Mini MySQL Admin
- (c) 2004-2006 Oleg Savchuk <osa@viakron.com>
- Charset support - thanks to Alex Didok (http://www.main.com.ua)
+ (c) 2004-2007 Oleg Savchuk <osa@viakron.com>
+ Charset support - thanks to Alex Didok http://www.main.com.ua
 
  Light standalone PHP script for easy access MySQL databases.
  http://phpminiadmin.sourceforge.net
@@ -21,7 +21,7 @@
  );
 
 //constants
- $VERSION='1.3.061201';
+ $VERSION='1.3.070204';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $is_limited_sql=0;
  $self=$_SERVER['PHP_SELF'];
@@ -202,23 +202,26 @@ function perform_dump_db(){
 function perform_export_db(){
  global $DB;
 
- $dr='';
-
- $sth=db_query("show tables from $DB[db]");
- while( $row=mysql_fetch_row($sth) ){
-   $dr.=perform_export_table($row[0],1)."\n";
- }
-
  header('Content-type: text/plain');
  header("Content-Disposition: attachment; filename=\"$DB[db].sql\"");
 
- echo $dr;
+ $sth=db_query("show tables from $DB[db]");
+ while( $row=mysql_fetch_row($sth) ){
+   perform_export_table($row[0],1);
+   echo "\n";
+ }
+
  exit;
 }
 
 function perform_export_table($t='',$isvar=0){
  global $dbh;
- $dr='';
+ set_time_limit(600);
+
+ if (!$isvar){
+    header('Content-type: text/plain');
+    header("Content-Disposition: attachment; filename=\"$t.sql\"");
+ }
 
  $sth=db_query("select * from `$t`");
  while( $row=mysql_fetch_row($sth) ){
@@ -226,17 +229,10 @@ function perform_export_table($t='',$isvar=0){
    foreach($row as $value){
      $values.=(($values)?',':'')."'".mysql_real_escape_string($value,$dbh)."'";
    }
-
-   $dr.="INSERT INTO `$t` VALUES ($values);\n";
+   echo "INSERT INTO `$t` VALUES ($values);\n";
  }
 
- if ($isvar){
-    return $dr;
- }else{
-    header('Content-type: text/plain');
-    header("Content-Disposition: attachment; filename=\"$t.sql\"");
-   
-    echo $dr;
+ if (!$isvar){
     exit;
  }
 }
@@ -407,7 +403,7 @@ Charset: <select name="v[chset]"><option value="">- default -</option><?=chset_s
 function db_connect($nodie=0){
  global $dbh,$DB,$err_msg;
 
- $dbh=mysql_connect($DB['host'].($DB['port']?":$DB[port]":''),$DB['user'],$DB['pwd']);
+ $dbh=@mysql_connect($DB['host'].($DB['port']?":$DB[port]":''),$DB['user'],$DB['pwd']);
  if (!$dbh) {
     $err_msg='Cannot connect to the database because: '.mysql_error();
     if (!$nodie) die($err_msg);
@@ -426,11 +422,11 @@ function db_connect($nodie=0){
  return $dbh;
 }
 
-function db_checkconnect($dbh1=NULL){
+function db_checkconnect($dbh1=NULL, $skiperr=0){
  global $dbh;
  if (!$dbh1) $dbh1=&$dbh;
  if (!$dbh1 or !mysql_ping($dbh1)) {
-    db_connect();
+    db_connect($skiperr);
     $dbh1=&$dbh;
  }
  return $dbh1;
@@ -442,15 +438,16 @@ function db_disconnect(){
 }
 
 function db_query($sql, $dbh1=NULL, $skiperr=0){
- $dbh1=db_checkconnect($dbh1);
- $sth=mysql_query($sql, $dbh1);
+ $dbh1=db_checkconnect($dbh1, $skiperr);
+ $sth=@mysql_query($sql, $dbh1);
  if (!$sth && $skiperr) return;
  catch_db_err($dbh1, $sth, $sql);
  return $sth;
 }
 
-function db_array($sql){#array of rows
- $sth=db_query($sql);
+function db_array($sql, $dbh1=NULL, $skiperr=0){#array of rows
+ $sth=db_query($sql, $dbh1, $skiperr);
+ if (!$sth) return;
  $res=array();
  while($row=mysql_fetch_assoc($sth)) $res[]=$row;
  return $res;
@@ -474,7 +471,7 @@ function get_db_select($sel=''){
    $_SESSION['sql_sd']=$arr;
  }
 
- return sel($arr,'Database',$sel);
+ return @sel($arr,'Database',$sel);
 }
 
 function chset_select($sel=''){
@@ -482,11 +479,11 @@ function chset_select($sel=''){
  if ($_SESSION['sql_chset']){
     $arr=$_SESSION['sql_chset'];
  }else{
-   $arr=db_array("show character set");
+   $arr=db_array("show character set",NULL,1);
    $_SESSION['sql_chset']=$arr;
  }
 
- return sel($arr,'Charset',$sel);
+ return @sel($arr,'Charset',$sel);
 }
 
 function sel($arr,$n,$sel=''){

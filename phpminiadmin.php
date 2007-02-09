@@ -21,7 +21,7 @@
  );
 
 //constants
- $VERSION='1.3.070204';
+ $VERSION='1.3.070209';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $is_limited_sql=0;
  $self=$_SERVER['PHP_SELF'];
@@ -95,6 +95,10 @@
        perform_export_db();
     }elseif ($_REQUEST['ext'] && $DB['db']){
        perform_export_table($_REQUEST['ext']);
+    }elseif ($_REQUEST['showim'] && $DB['db']){
+       print_import();exit;
+    }elseif ($_REQUEST['doim'] && $DB['db']){
+       do_import();
     }else{
        if ($DB['db']){
           if (!$_REQUEST['refresh'] || preg_match('/^select|show|explain/',$SQLq) ) perform_sql($SQLq,$page);  #perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
@@ -253,6 +257,7 @@ tr.e{background-color:#CCCCCC}
 tr.o{background-color:#EEEEEE}
 tr.h{background-color:#9999CC}
 .err{color:#FF3333;font-weight:bold;text-align:center}
+.frm{width:400px;border:1px solid #999999;background-color:#eeeeee;text-align:left}
 </style>
 
 <script type="text/javascript">
@@ -279,7 +284,7 @@ function chksql(){
 
 </head>
 <body>
-<form method="post" name="DF" action="<?=$self?>">
+<form method="post" name="DF" action="<?=$self?>" enctype="multipart/form-data">
 <input type="hidden" name="refresh" value="">
 <input type="hidden" name="p" value="">
 
@@ -295,6 +300,7 @@ Database: <select name="db" onChange="frefresh()">
  &#183;<a href="<?=$self?>?db=<?=$dbn?>&q=show+tables">show tables</a>
  &#183;<a href="<?=$self?>?db=<?=$dbn?>&dp=1">dump structure</a>
  &#183;<a href="<?=$self?>?db=<?=$dbn?>&ex=1">export data</a>
+ &#183;<a href="<?=$self?>?db=<?=$dbn?>&showim=1">import</a>
 <? } ?>
  | <a href="?showcfg=1">Settings</a> 
 <?} ?>
@@ -382,7 +388,7 @@ function print_cfg(){
 
 <center>
 <h3>DB Connection Settings</h3>
-<div style="width:400px;border:1px solid #999999;background-color:#eeeeee;text-align:left">
+<div class="frm">
 User name: <input type="text" name="v[user]" value="<?=$DB['user']?>"><br />
 Password: <input type="password" name="v[pwd]" value=""><br />
 MySQL host: <input type="text" name="v[host]" value="<?=$DB['host']?>"> port: <input type="text" name="v[port]" value="<?=$DB['port']?>" size="4"><br />
@@ -616,4 +622,142 @@ function loadsess(){
     $DB['db']=$rdb;
  }
 }
+
+function print_import(){
+ global $self;
+ print_header();
+?>
+
+<center>
+<h3>Import DB</h3>
+<div class="frm">
+SQL file: <input type="file" name="file1" value=""><br />
+<input type="hidden" name="doim" value="1">
+<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
+</div>
+</center>
+
+<?
+ print_footer();
+}
+
+function do_import(){
+ global $err_msg,$out_message,$dbh;
+
+ if ($_FILES['file1'] && $_FILES['file1']['name']){
+  $filename=$_FILES['file1']['tmp_name'];
+  if (!do_multi_sql('', $filename) ){
+     $err_msg="Error: ".mysql_error($dbh);
+  }else{
+     $out_message='Import done successfully';
+     perform_sql('show tables');
+     return;
+  }
+ }else{
+  $err_msg="Error: Please select file first";
+ }
+ print_import();
+ exit;
+}
+
+// multiple SQL statements splitter
+function do_multi_sql($insql, $fname){
+ set_time_limit(600);
+
+ $sql='';
+ $ochar='';
+ while ( $str=get_next_chunk($insql, $fname) ){
+    $opos=-strlen($ochar);
+    $cur_pos=0;
+    $i=strlen($str);
+    while ($i--){
+       if ($ochar){
+          list($clchar, $clpos)=get_close_char($str, $opos+strlen($ochar), $ochar);
+          if ( $clchar ) {
+             if ($ochar=='--' || $ochar=='#' || $ochar=='/*' && substr($str, $opos, 3)!='/*!' ){
+                $sql.=substr($str, $cur_pos, $opos-$cur_pos );
+             }else{
+                $sql.=substr($str, $cur_pos, $clpos+strlen($clchar)-$cur_pos );
+             }
+             $cur_pos=$clpos+strlen($clchar);
+             $ochar='';
+             $opos=0;
+          }else{
+             $sql.=substr($str, $cur_pos);
+             break;
+          }
+       }else{
+          list($ochar, $opos)=get_open_char($str, $cur_pos);
+          if ($ochar==';'){
+             $sql.=substr($str, $cur_pos, $opos-$cur_pos+1);
+             if (!do_one_sql($sql)) return 0;
+             $sql='';
+             $cur_pos=$opos+strlen($ochar);
+             $ochar='';
+             $opos=0;
+          }elseif(!$ochar) {
+             $sql.=substr($str, $cur_pos);
+             break;
+          }else{
+          }
+       }
+    }
+ }
+
+ if ($sql){
+    if (!do_one_sql($sql)) return 0;
+    $sql='';
+ }
+
+ return 1;
+}
+
+//read from insql var or file
+function get_next_chunk($insql, $fname){
+ global $LFILE, $insql_done;
+ if ($insql) {
+    if ($insql_done){
+       return '';
+    }else{
+       $insql_done=1;
+       return $insql;
+    }
+ }
+ if (!$LFILE){
+    $LFILE=fopen($fname,"r+b") or die("Can't open [$fname] file $!");
+ }
+ return fread($LFILE, 1*1024);
+}
+
+function get_open_char($str, $pos){
+ if ( preg_match("/(\/\*|^--|(?<=\s)--|#|'|\"|;)/", $str, $matches, PREG_OFFSET_CAPTURE, $pos) ) {
+    $ochar=$matches[1][0];
+    $opos=$matches[1][1];
+ }
+ return array($ochar, $opos);
+}
+
+function get_close_char($str, $pos, $ochar){
+ $aCLOSE=array(
+   '\'' => '(?<!\\\\)\'',
+   '"' => '(?<!\\\\)"',
+   '/*' => '\*\/',
+   '#' => '[\r\n]+',
+   '--' => '[\r\n]+',
+ );
+ if ( $aCLOSE[$ochar] && preg_match("/(".$aCLOSE[$ochar].")/", $str, $matches, PREG_OFFSET_CAPTURE, $pos ) ) {
+    $clchar=$matches[1][0];
+    $clpos=$matches[1][1];
+ }
+ return array($clchar, $clpos);
+}
+
+function do_one_sql($sql){
+ $sql=trim($sql);
+ if ($sql){
+    return db_query($sql, 0, 'noerr');
+ }
+ return 1;
+}
+
 ?>

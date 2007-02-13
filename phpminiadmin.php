@@ -21,7 +21,7 @@
  );
 
 //constants
- $VERSION='1.3.070209';
+ $VERSION='1.3.070213';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $is_limited_sql=0;
  $self=$_SERVER['PHP_SELF'];
@@ -86,25 +86,21 @@
     $time_start=microtime_float();
    
     if ($_REQUEST['phpinfo']){
-       ob_start();
-       phpinfo();
-       $sqldr=ob_get_clean();
-    }elseif ($_REQUEST['dp'] && $DB['db']){
-       perform_dump_db();
-    }elseif ($_REQUEST['ex'] && $DB['db']){
-       perform_export_db();
-    }elseif ($_REQUEST['ext'] && $DB['db']){
-       perform_export_table($_REQUEST['ext']);
-    }elseif ($_REQUEST['showim'] && $DB['db']){
-       print_import();exit;
-    }elseif ($_REQUEST['doim'] && $DB['db']){
-       do_import();
+       ob_start();phpinfo();$sqldr=ob_get_clean();
     }else{
-       if ($DB['db']){
-          if (!$_REQUEST['refresh'] || preg_match('/^select|show|explain/',$SQLq) ) perform_sql($SQLq,$page);  #perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
-       }else{
-          $err_msg="Select DB first";
-       }
+     if ($DB['db']){
+      if ($_REQUEST['shex']){
+       print_export();
+      }elseif ($_REQUEST['doex']){
+       do_export();
+      }elseif ($_REQUEST['shim']){
+       print_import();
+      }elseif ($_REQUEST['doim']){
+       do_import();
+      }elseif (!$_REQUEST['refresh'] || preg_match('/^select|show|explain/',$SQLq) ) perform_sql($SQLq,$page);  #perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
+     }else{
+        $err_msg="Select DB first";
+     }
     }
     $time_all=ceil((microtime_float()-$time_start)*10000)/10000;
    
@@ -159,7 +155,7 @@ function perform_sql($q, $page=0){
                $more="<td>&#183;<a href=\"?db=$dbn&q=show+create+table+$v\">sct</a></td>"
                ."<td>&#183;<a href=\"?db=$dbn&q=explain+$v\">exp</a></td>"
                ."<td>&#183;<a href=\"?db=$dbn&q=show+index+from+$v\">ind</a></td>"
-               ."<td>&#183;<a href=\"?db=$dbn&ext=$v\">e</a></td>"
+               ."<td>&#183;<a href=\"?db=$dbn&shex=1&t=$v\">e</a></td>"
                ."<td>&#183;<a href=\"?db=$dbn&q=drop+table+$v\" onclick='return ays()'>drop</a></td>"
                ."<td>&#183;<a href=\"?db=$dbn&q=truncate+table+$v\" onclick='return ays()'>trunc</a></td>";
             }
@@ -187,58 +183,6 @@ function perform_sql($q, $page=0){
     $out_message="Please type in right SQL statements";
  }
 
-}
-
-function perform_dump_db(){
- global $DB, $sqldr, $reccount;
-
- $sth=db_query("show tables from $DB[db]");
- while( $row=mysql_fetch_row($sth) ){
-   $sth2=db_query("show create table `$row[0]`");
-   $row2=mysql_fetch_row($sth2);
-   $sqldr.="$row2[1];\n\n";
-   $reccount++;
- }
-
- $sqldr="<pre>$sqldr</pre>";
-}
-
-function perform_export_db(){
- global $DB;
-
- header('Content-type: text/plain');
- header("Content-Disposition: attachment; filename=\"$DB[db].sql\"");
-
- $sth=db_query("show tables from $DB[db]");
- while( $row=mysql_fetch_row($sth) ){
-   perform_export_table($row[0],1);
-   echo "\n";
- }
-
- exit;
-}
-
-function perform_export_table($t='',$isvar=0){
- global $dbh;
- set_time_limit(600);
-
- if (!$isvar){
-    header('Content-type: text/plain');
-    header("Content-Disposition: attachment; filename=\"$t.sql\"");
- }
-
- $sth=db_query("select * from `$t`");
- while( $row=mysql_fetch_row($sth) ){
-   $values='';
-   foreach($row as $value){
-     $values.=(($values)?',':'')."'".mysql_real_escape_string($value,$dbh)."'";
-   }
-   echo "INSERT INTO `$t` VALUES ($values);\n";
- }
-
- if (!$isvar){
-    exit;
- }
 }
 
 function print_header(){
@@ -289,18 +233,14 @@ function chksql(){
 <input type="hidden" name="p" value="">
 
 <div class="inv">
-<a href="http://sourceforge.net/projects/phpminiadmin/" target="_blank"><b>phpMiniAdmin <?=$VERSION?></b></a>
+<a href="http://phpminiadmin.sourceforge.net/" target="_blank"><b>phpMiniAdmin <?=$VERSION?></b></a>
 <? if ($_SESSION['is_logged'] && $dbh){ ?>
  | 
-Database: <select name="db" onChange="frefresh()">
-<option value='*'> - select/refresh -
-<?=get_db_select($dbn)?>
-</select>
+Database: <select name="db" onChange="frefresh()"><option value='*'> - select/refresh -<?=get_db_select($dbn)?></select>
 <? if($dbn){ ?>
  &#183;<a href="<?=$self?>?db=<?=$dbn?>&q=show+tables">show tables</a>
- &#183;<a href="<?=$self?>?db=<?=$dbn?>&dp=1">dump structure</a>
- &#183;<a href="<?=$self?>?db=<?=$dbn?>&ex=1">export data</a>
- &#183;<a href="<?=$self?>?db=<?=$dbn?>&showim=1">import</a>
+ &#183;<a href="<?=$self?>?db=<?=$dbn?>&shex=1">export</a>
+ &#183;<a href="<?=$self?>?db=<?=$dbn?>&shim=1">import</a>
 <? } ?>
  | <a href="?showcfg=1">Settings</a> 
 <?} ?>
@@ -355,7 +295,7 @@ function print_footer(){
 <br>
 
 <div align="right">
-<small>&copy; 2004-2006 Oleg Savchuk</small>
+<small>&copy; 2004-2007 Oleg Savchuk</small>
 </div>
 </body></html>
 <?
@@ -441,6 +381,11 @@ function db_checkconnect($dbh1=NULL, $skiperr=0){
 function db_disconnect(){
  global $dbh;
  mysql_close($dbh);
+}
+
+function dbq($s){
+ global $dbh;
+ return mysql_real_escape_string($s,$dbh);
 }
 
 function db_query($sql, $dbh1=NULL, $skiperr=0){
@@ -623,11 +568,75 @@ function loadsess(){
  }
 }
 
+function print_export(){
+ global $self;
+ $t=$_REQUEST['t'];
+ $l=($t)?"Table `$t`":"DB";
+ print_header();
+?>
+<center>
+<h3>Export <?php echo $l?></h3>
+<div class="frm">
+<input type="checkbox" name="s" value="1" checked> Structure<br />
+<input type="checkbox" name="d" value="1" checked> Data<br />
+<input type="hidden" name="doex" value="1">
+<input type="hidden" name="t" value="<?php echo $t?>">
+<input type="submit" value=" Download "><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
+</div>
+</center>
+<?
+ print_footer();
+ exit;
+}
+
+function do_export(){
+ global $DB;
+
+ header('Content-type: text/plain');
+ header("Content-Disposition: attachment; filename=\"$DB[db].sql\"");
+
+ $t=$_REQUEST['t'];
+ $sth=db_query("show tables from $DB[db]".(($t)?" like '".dbq($t)."'":""));
+ while( $row=mysql_fetch_row($sth) ){
+   do_export_table($row[0],1);
+ }
+ exit;
+}
+
+function do_export_table($t='',$isvar=0){
+ set_time_limit(600);
+
+ if (!$isvar){
+    header('Content-type: text/plain');
+    header("Content-Disposition: attachment; filename=\"$t.sql\"");
+ }
+
+ if ($_REQUEST['s']){
+  $sth=db_query("show create table `$t`");
+  $row=mysql_fetch_row($sth);
+  echo "$row[1];\n\n";
+ }
+
+ if ($_REQUEST['d']){
+  $sth=db_query("select * from `$t`");
+  while($row=mysql_fetch_row($sth)){
+    $values='';
+    foreach($row as $value){
+      $values.=(($values)?',':'')."'".dbq($value)."'";
+    }
+    echo "INSERT INTO `$t` VALUES ($values);\n";
+  }
+  echo "\n";
+ }
+ flush();
+ if (!$isvar) exit;
+}
+
+
 function print_import(){
  global $self;
  print_header();
 ?>
-
 <center>
 <h3>Import DB</h3>
 <div class="frm">
@@ -636,9 +645,9 @@ SQL file: <input type="file" name="file1" value=""><br />
 <input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
 </div>
 </center>
-
 <?
  print_footer();
+ exit;
 }
 
 function do_import(){

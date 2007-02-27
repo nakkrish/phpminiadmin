@@ -21,14 +21,12 @@
  );
 
 //constants
- $VERSION='1.3.070213';
+ $VERSION='1.4.070227';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
- $is_limited_sql=0;
  $self=$_SERVER['PHP_SELF'];
 
  session_start();
 
-//for debug set to 1
  ini_set('display_errors',0);
 // error_reporting(E_ALL ^ E_NOTICE);
 
@@ -97,7 +95,7 @@
        print_import();
       }elseif ($_REQUEST['doim']){
        do_import();
-      }elseif (!$_REQUEST['refresh'] || preg_match('/^select|show|explain/',$SQLq) ) perform_sql($SQLq,$page);  #perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
+      }elseif (!$_REQUEST['refresh'] || preg_match('/^select|show|explain/',$SQLq) ) do_sql($SQLq);#perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
      }else{
         $err_msg="Select DB first";
      }
@@ -110,78 +108,72 @@
  }
 
 //**************** functions
+function do_sql($q){
+ global $dbh,$last_sth,$last_sql,$reccount,$out_message,$SQLq;
+ $SQLq=$q;
 
-function perform_sql($q, $page=0){
- global $dbh, $DB, $out_message, $sqldr, $reccount, $MAX_ROWS_PER_PAGE, $is_limited_sql;
+ if (!do_multi_sql($q,'',1)){
+    $out_message="Error: ".mysql_error($dbh);
+ }else{
+    if ($last_sth && $last_sql){
+       $SQLq=$last_sql;
+       if (preg_match("/^select|show|explain/i",$last_sql)) {
+          if ($q!=$last_sql) $out_message="Results of the last select displayed:";
+          display_select($last_sth,$last_sql);
+       } else {
+         $reccount=mysql_affected_rows($dbh);
+         $out_message="Done.";
+         if (preg_match("/^insert|replace/i",$last_sql)) $out_message.=" Last inserted id=".get_identity();
+         if (preg_match("/^drop|truncate/i",$last_sql)) do_sql("show tables",1000);
+       }
+    }
+ }
+}
+
+function display_select($sth,$q){
+ global $dbh, $DB, $sqldr, $reccount;
  $rc=array("o","e");
  $dbn=$DB['db'];
 
- if (preg_match("/^select|show|explain/i",$q)){
-    $sql=$q;
-    $is_show_tables=($q=='show tables');
-    $is_show_crt=(preg_match('/^show create table/i',$q));
+ $is_show_tables=(preg_match('/^show tables/i',$q));
+ $is_show_crt=(preg_match('/^show create table/i',$q));
 
-    if (preg_match("/^select/i",$q) && !preg_match("/limit +\d+/i", $q)){
-       $offset=$page*$MAX_ROWS_PER_PAGE;
-       $sql.=" LIMIT $offset,$MAX_ROWS_PER_PAGE";
-       $is_limited_sql=1;
-    }
-    $sth=db_query($sql, 0, 'noerr');
-    if($sth==0){
-       $out_message = "Error ".mysql_error($dbh);
-    }else{
-       $reccount=mysql_num_rows($sth);
-       $fields_num=mysql_num_fields($sth);
+ $reccount=mysql_num_rows($sth);
+ $fields_num=mysql_num_fields($sth);
  
-       $w="width='100%' ";
-       if ($is_show_tables) $w='';
-       $sqldr="<table border='0' cellpadding='1' cellspacing='1' $w class='res'>";
-       $headers="<tr class='h'>";
-       for($i=0;$i<$fields_num;$i++){
-          $meta=mysql_fetch_field($sth,$i);
-          $fnames[$i]=$meta->name;
-          $headers.="<th>$fnames[$i]</th>";
-       }
-       if ($is_show_tables) $headers.="<th>show create table</th><th>explain</th><th>indexes</th><th>export</th><th>drop</th><th>truncate</th>";
-       $headers.="</tr>\n";
-       $sqldr.=$headers;
-       $swapper=false;
-       while($hf=mysql_fetch_assoc($sth)){
-         $sqldr.="<tr class='".$rc[$swp=!$swp]."'>";
-         for($i=0;$i<$fields_num;$i++){
-            $v=$hf[$fnames[$i]];$more='';
-            if ($is_show_tables && $i==0 && $v){
-               $v="<a href=\"?db=$dbn&q=select+*+from+$v\">$v</a>".
-               $more="<td>&#183;<a href=\"?db=$dbn&q=show+create+table+$v\">sct</a></td>"
-               ."<td>&#183;<a href=\"?db=$dbn&q=explain+$v\">exp</a></td>"
-               ."<td>&#183;<a href=\"?db=$dbn&q=show+index+from+$v\">ind</a></td>"
-               ."<td>&#183;<a href=\"?db=$dbn&shex=1&t=$v\">e</a></td>"
-               ."<td>&#183;<a href=\"?db=$dbn&q=drop+table+$v\" onclick='return ays()'>drop</a></td>"
-               ."<td>&#183;<a href=\"?db=$dbn&q=truncate+table+$v\" onclick='return ays()'>trunc</a></td>";
-            }
-            if ($is_show_crt) $v="<pre>$v</pre>";
-            $sqldr.="<td>$v".(!v?"<br />":'')."</td>";
-         }
-         $sqldr.="</tr>\n";
-       }
-       $sqldr.="</table>\n";
-    }
-
+ $w="width='100%' ";
+ if ($is_show_tables) $w='';
+ $sqldr="<table border='0' cellpadding='1' cellspacing='1' $w class='res'>";
+ $headers="<tr class='h'>";
+ for($i=0;$i<$fields_num;$i++){
+    $meta=mysql_fetch_field($sth,$i);
+    $fnames[$i]=$meta->name;
+    $headers.="<th>$fnames[$i]</th>";
  }
- elseif (preg_match("/^update|insert|replace|delete|drop|truncate|alter|create/i",$q)){
-    $sth = db_query($q, 0, 'noerr');
-    if($sth==0){
-       $out_message="Error ".mysql_error($dbh);
-    }
-    else{
-       $reccount=mysql_affected_rows($dbh);
-       $out_message="Done.";
-       if (preg_match("/^insert|replace/i",$q)) $out_message.=" New inserted id=".get_identity();
-       if (preg_match("/^drop|truncate/i",$q)) perform_sql("show tables");
-    }
- }else{
-    $out_message="Please type in right SQL statements";
+ if ($is_show_tables) $headers.="<th>show create table</th><th>explain</th><th>indexes</th><th>export</th><th>drop</th><th>truncate</th><th>optimize</th>";
+ $headers.="</tr>\n";
+ $sqldr.=$headers;
+ $swapper=false;
+ while($hf=mysql_fetch_assoc($sth)){
+   $sqldr.="<tr class='".$rc[$swp=!$swp]."'>";
+   for($i=0;$i<$fields_num;$i++){
+      $v=$hf[$fnames[$i]];$more='';
+      if ($is_show_tables && $i==0 && $v){
+         $v="<a href=\"?db=$dbn&q=select+*+from+$v\">$v</a>".
+         $more="<td>&#183;<a href=\"?db=$dbn&q=show+create+table+$v\">sct</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=explain+$v\">exp</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=show+index+from+$v\">ind</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&shex=1&t=$v\">e</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=drop+table+$v\" onclick='return ays()'>drop</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=truncate+table+$v\" onclick='return ays()'>trunc</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=optimize+table+$v\" onclick='return ays()'>opt</a></td>";
+      }
+      if ($is_show_crt) $v="<pre>$v</pre>";
+      $sqldr.="<td>$v".(!v?"<br />":'')."</td>";
+   }
+   $sqldr.="</tr>\n";
  }
+ $sqldr.="</table>\n";
 
 }
 
@@ -262,7 +254,7 @@ function print_screen(){
 
 <center>
 <div style="width:500px;" align="left">
-SQL-query:<br />
+SQL-query (or many queries):<br />
 <textarea name="q" cols="70" rows="10"><?=$SQLq?></textarea>
 <input type=submit name="GoSQL" value="Go" onclick="return chksql()" style="width:100px">&nbsp;&nbsp;
 <input type=button name="Clear" value=" Clear " onClick="document.DF.q.value=''" style="width:100px">
@@ -276,9 +268,7 @@ Records: <b><?=$reccount?></b> in <b><?=$time_all?></b> sec<br />
 <hr />
 <?
  if ($is_limited_sql && ($page || $reccount>=$MAX_ROWS_PER_PAGE) ){
-  echo "<center>";
-  echo make_List_Navigation($page, 10000, $MAX_ROWS_PER_PAGE, "javascript:go(%p%)");
-  echo "</center>";
+  echo "<center>".make_List_Navigation($page, 10000, $MAX_ROWS_PER_PAGE, "javascript:go(%p%)")."</center>";
  }
 #$reccount
 ?>
@@ -302,10 +292,8 @@ function print_footer(){
 }
 
 function print_login(){
-
  print_header();
 ?>
-
 <center>
 <h3>Access protected by password</h3>
 <div style="width:400px;border:1px solid #999999;background-color:#eeeeee">
@@ -314,7 +302,6 @@ Password: <input type="password" name="pwd" value="">
 <input type="submit" value=" Login ">
 </div>
 </center>
-
 <?
  print_footer();
 }
@@ -322,10 +309,8 @@ Password: <input type="password" name="pwd" value="">
 
 function print_cfg(){
  global $DB,$err_msg,$self;
-
  print_header();
 ?>
-
 <center>
 <h3>DB Connection Settings</h3>
 <div class="frm">
@@ -339,7 +324,6 @@ Charset: <select name="v[chset]"><option value="">- default -</option><?=chset_s
 <input type="submit" value=" Apply "><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
 </div>
 </center>
-
 <?
  print_footer();
 }
@@ -591,11 +575,11 @@ function print_export(){
 
 function do_export(){
  global $DB;
+ $t=$_REQUEST['t'];
 
  header('Content-type: text/plain');
- header("Content-Disposition: attachment; filename=\"$DB[db].sql\"");
+ header("Content-Disposition: attachment; filename=\"$DB[db]".(($t)?".$t":"").".sql\"");
 
- $t=$_REQUEST['t'];
  $sth=db_query("show tables from $DB[db]".(($t)?" like '".dbq($t)."'":""));
  while( $row=mysql_fetch_row($sth) ){
    do_export_table($row[0],1);
@@ -605,31 +589,31 @@ function do_export(){
 
 function do_export_table($t='',$isvar=0){
  set_time_limit(600);
-
- if (!$isvar){
-    header('Content-type: text/plain');
-    header("Content-Disposition: attachment; filename=\"$t.sql\"");
- }
+ $MAXI=838860;
 
  if ($_REQUEST['s']){
   $sth=db_query("show create table `$t`");
   $row=mysql_fetch_row($sth);
-  echo "$row[1];\n\n";
+  echo "DROP TABLE IF EXISTS `$t`;\n$row[1];\n\n";
  }
 
  if ($_REQUEST['d']){
+  $exsql='';
+  echo "/*!40000 ALTER TABLE `$t` DISABLE KEYS */;\n";
   $sth=db_query("select * from `$t`");
   while($row=mysql_fetch_row($sth)){
     $values='';
-    foreach($row as $value){
-      $values.=(($values)?',':'')."'".dbq($value)."'";
+    foreach($row as $value) $values.=(($values)?',':'')."'".dbq($value)."'";
+    $exsql.=(($exsql)?',':'')."(".$values.")";
+    if (strlen($exsql)>$MAXI) {
+       echo "INSERT INTO `$t` VALUES $exsql;\n";$exsql='';
     }
-    echo "INSERT INTO `$t` VALUES ($values);\n";
   }
+  if ($exsql) echo "INSERT INTO `$t` VALUES $exsql;\n";
+  echo "/*!40000 ALTER TABLE `$t` ENABLE KEYS */;\n";
   echo "\n";
  }
  flush();
- if (!$isvar) exit;
 }
 
 
@@ -640,7 +624,7 @@ function print_import(){
 <center>
 <h3>Import DB</h3>
 <div class="frm">
-SQL file: <input type="file" name="file1" value=""><br />
+.sql file: <input type="file" name="file1" value="" size=40><br />
 <input type="hidden" name="doim" value="1">
 <input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
 </div>
@@ -659,7 +643,7 @@ function do_import(){
      $err_msg="Error: ".mysql_error($dbh);
   }else{
      $out_message='Import done successfully';
-     perform_sql('show tables');
+     do_sql('show tables');
      return;
   }
  }else{
@@ -675,6 +659,8 @@ function do_multi_sql($insql, $fname){
 
  $sql='';
  $ochar='';
+ $is_cmt='';
+ $GLOBALS['insql_done']=0;
  while ( $str=get_next_chunk($insql, $fname) ){
     $opos=-strlen($ochar);
     $cur_pos=0;
@@ -683,7 +669,7 @@ function do_multi_sql($insql, $fname){
        if ($ochar){
           list($clchar, $clpos)=get_close_char($str, $opos+strlen($ochar), $ochar);
           if ( $clchar ) {
-             if ($ochar=='--' || $ochar=='#' || $ochar=='/*' && substr($str, $opos, 3)!='/*!' ){
+             if ($ochar=='--' || $ochar=='#' || $is_cmt ){
                 $sql.=substr($str, $cur_pos, $opos-$cur_pos );
              }else{
                 $sql.=substr($str, $cur_pos, $clpos+strlen($clchar)-$cur_pos );
@@ -708,6 +694,7 @@ function do_multi_sql($insql, $fname){
              $sql.=substr($str, $cur_pos);
              break;
           }else{
+             $is_cmt=0;if ($ochar=='/*' && substr($str, $opos, 3)!='/*!') $is_cmt=1;
           }
        }
     }
@@ -732,39 +719,58 @@ function get_next_chunk($insql, $fname){
        return $insql;
     }
  }
+ if (!$fname) return '';
  if (!$LFILE){
     $LFILE=fopen($fname,"r+b") or die("Can't open [$fname] file $!");
  }
- return fread($LFILE, 1*1024);
+ return fread($LFILE, 64*1024);
 }
 
 function get_open_char($str, $pos){
- if ( preg_match("/(\/\*|^--|(?<=\s)--|#|'|\"|;)/", $str, $matches, PREG_OFFSET_CAPTURE, $pos) ) {
-    $ochar=$matches[1][0];
-    $opos=$matches[1][1];
+ if ( preg_match("/(\/\*|^--|(?<=\s)--|#|'|\"|;)/", $str, $m, PREG_OFFSET_CAPTURE, $pos) ) {
+    $ochar=$m[1][0];
+    $opos=$m[1][1];
  }
  return array($ochar, $opos);
 }
 
+#RECURSIVE!
 function get_close_char($str, $pos, $ochar){
  $aCLOSE=array(
-   '\'' => '(?<!\\\\)\'',
+   '\'' => '(?<!\\\\)\'|(\\\\+)\'',
    '"' => '(?<!\\\\)"',
    '/*' => '\*\/',
    '#' => '[\r\n]+',
    '--' => '[\r\n]+',
  );
- if ( $aCLOSE[$ochar] && preg_match("/(".$aCLOSE[$ochar].")/", $str, $matches, PREG_OFFSET_CAPTURE, $pos ) ) {
-    $clchar=$matches[1][0];
-    $clpos=$matches[1][1];
+ if ( $aCLOSE[$ochar] && preg_match("/(".$aCLOSE[$ochar].")/", $str, $m, PREG_OFFSET_CAPTURE, $pos ) ) {
+    $clchar=$m[1][0];
+    $clpos=$m[1][1];
+    $sl=strlen($m[2][0]);
+    if ($ochar=="'" && $sl){
+       if ($sl % 2){ #don't count as CLOSE char if number of slashes before ' ODD
+          list($clchar, $clpos)=get_close_char($str, $clpos+strlen($clchar), $ochar);
+       }else{
+          $clpos+=strlen($clchar)-1;$clchar="'";#correction
+       }
+    }
  }
  return array($clchar, $clpos);
 }
 
 function do_one_sql($sql){
+ global $last_sth,$last_sql,$MAX_ROWS_PER_PAGE,$page,$is_limited_sql;
  $sql=trim($sql);
+ $sql=preg_replace("/;$/","",$sql);
  if ($sql){
-    return db_query($sql, 0, 'noerr');
+    $last_sql=$sql;$is_limited_sql=0;
+    if (preg_match("/^select/i",$sql) && !preg_match("/limit +\d+/i", $sql)){
+       $offset=$page*$MAX_ROWS_PER_PAGE;
+       $sql.=" LIMIT $offset,$MAX_ROWS_PER_PAGE";
+       $is_limited_sql=1;
+    }
+    $last_sth=db_query($sql,0,'noerr');
+    return $last_sth;
  }
  return 1;
 }

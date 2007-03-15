@@ -21,7 +21,7 @@
  );
 
 //constants
- $VERSION='1.4.070227';
+ $VERSION='1.4.070315';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $self=$_SERVER['PHP_SELF'];
 
@@ -52,6 +52,7 @@
 
  if ($_REQUEST['logoff']){
     $_SESSION = array();
+    savecfg();
     session_destroy();
     $url=$self;
     if (!$ACCESS_PWD) $url='/';
@@ -95,6 +96,8 @@
        print_import();
       }elseif ($_REQUEST['doim']){
        do_import();
+      }elseif ($_REQUEST['dosht']){
+       do_sht();
       }elseif (!$_REQUEST['refresh'] || preg_match('/^select|show|explain/',$SQLq) ) do_sql($SQLq);#perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
      }else{
         $err_msg="Select DB first";
@@ -124,61 +127,70 @@ function do_sql($q){
          $reccount=mysql_affected_rows($dbh);
          $out_message="Done.";
          if (preg_match("/^insert|replace/i",$last_sql)) $out_message.=" Last inserted id=".get_identity();
-         if (preg_match("/^drop|truncate/i",$last_sql)) do_sql("show tables",1000);
+         if (preg_match("/^drop|truncate/i",$last_sql)) do_sql("show tables");
        }
     }
  }
 }
 
 function display_select($sth,$q){
- global $dbh, $DB, $sqldr, $reccount;
+ global $dbh,$DB,$sqldr,$reccount,$is_sht;
  $rc=array("o","e");
  $dbn=$DB['db'];
+ $sqldr='';
 
- $is_show_tables=(preg_match('/^show tables/i',$q));
+ $is_sht=(preg_match('/^show tables/i',$q));
  $is_show_crt=(preg_match('/^show create table/i',$q));
 
  $reccount=mysql_num_rows($sth);
  $fields_num=mysql_num_fields($sth);
  
  $w="width='100%' ";
- if ($is_show_tables) $w='';
- $sqldr="<table border='0' cellpadding='1' cellspacing='1' $w class='res'>";
+ if ($is_sht) {$w='';
+   $abtn="&nbsp;<input type='submit' value='Export' onclick=\"sht('exp')\">
+ <input type='submit' value='Drop' onclick=\"if(ays()){sht('drop')}else{return false}\">
+ <input type='submit' value='Truncate' onclick=\"if(ays()){sht('tunc')}else{return false}\">
+ <input type='submit' value='Optimize' onclick=\"sht('opt')\">
+ <b>selected tables</b>";
+   $sqldr.=$abtn."<input type='hidden' name='dosht' value=''>";
+ }
+ $sqldr.="<table border='0' cellpadding='1' cellspacing='1' $w class='res'>";
  $headers="<tr class='h'>";
+ if ($is_sht) $headers.="<td><input type='checkbox' name='cball' value='' onclick='chkall(this)'></td>";
  for($i=0;$i<$fields_num;$i++){
     $meta=mysql_fetch_field($sth,$i);
-    $fnames[$i]=$meta->name;
-    $headers.="<th>$fnames[$i]</th>";
+    $headers.="<th>".$meta->name."</th>";
  }
- if ($is_show_tables) $headers.="<th>show create table</th><th>explain</th><th>indexes</th><th>export</th><th>drop</th><th>truncate</th><th>optimize</th>";
+ if ($is_sht) $headers.="<th>show create table</th><th>explain</th><th>indexes</th><th>export</th><th>drop</th><th>truncate</th><th>optimize</th>";
  $headers.="</tr>\n";
  $sqldr.=$headers;
  $swapper=false;
- while($hf=mysql_fetch_assoc($sth)){
+ while($row=mysql_fetch_row($sth)){
    $sqldr.="<tr class='".$rc[$swp=!$swp]."'>";
    for($i=0;$i<$fields_num;$i++){
-      $v=$hf[$fnames[$i]];$more='';
-      if ($is_show_tables && $i==0 && $v){
-         $v="<a href=\"?db=$dbn&q=select+*+from+$v\">$v</a>".
-         $more="<td>&#183;<a href=\"?db=$dbn&q=show+create+table+$v\">sct</a></td>"
+      $v=$row[$i];$more='';
+      if ($is_sht && $i==0 && $v){
+         $v="<input type='checkbox' name='cb[]' value=\"$v\"></td>"
+         ."<td><a href=\"?db=$dbn&q=select+*+from+$v\">$v</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=show+create+table+$v\">sct</a></td>"
          ."<td>&#183;<a href=\"?db=$dbn&q=explain+$v\">exp</a></td>"
          ."<td>&#183;<a href=\"?db=$dbn&q=show+index+from+$v\">ind</a></td>"
          ."<td>&#183;<a href=\"?db=$dbn&shex=1&t=$v\">e</a></td>"
          ."<td>&#183;<a href=\"?db=$dbn&q=drop+table+$v\" onclick='return ays()'>drop</a></td>"
          ."<td>&#183;<a href=\"?db=$dbn&q=truncate+table+$v\" onclick='return ays()'>trunc</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&q=optimize+table+$v\" onclick='return ays()'>opt</a></td>";
+         ."<td>&#183;<a href=\"?db=$dbn&q=optimize+table+$v\" onclick='return ays()'>opt</a>";
       }
       if ($is_show_crt) $v="<pre>$v</pre>";
-      $sqldr.="<td>$v".(!v?"<br />":'')."</td>";
+      $sqldr.="<td>$v".(!$v?"<br />":'')."</td>";
    }
    $sqldr.="</tr>\n";
  }
- $sqldr.="</table>\n";
+ $sqldr.="</table>\n".$abtn;
 
 }
 
 function print_header(){
- global $err_msg,$VERSION,$DB,$dbh,$self;
+ global $err_msg,$VERSION,$DB,$dbh,$self,$is_sht;
  $dbn=$DB['db'];
 ?>
 <html>
@@ -216,6 +228,18 @@ function chksql(){
  var F=document.DF;
  if(/^\s*(?:delete|drop|truncate|alter)/.test(F.q.value)) return ays();
 }
+<?if($is_sht){?>
+function chkall(cab){
+ var e=document.DF.elements;
+ if (e!=null){
+  var cl=e.length;                   
+  for (i=0;i<cl;i++){var m=e[i];if(m.checked!=null && m.type=="checkbox"){m.checked=cab.checked}}
+ }
+}
+function sht(f){
+ document.DF.dosht.value=f;
+}
+<?}?>
 </script>
 
 </head>
@@ -231,6 +255,7 @@ function chksql(){
 Database: <select name="db" onChange="frefresh()"><option value='*'> - select/refresh -<?=get_db_select($dbn)?></select>
 <? if($dbn){ ?>
  &#183;<a href="<?=$self?>?db=<?=$dbn?>&q=show+tables">show tables</a>
+ &#183;<a href="<?=$self?>?db=<?=$dbn?>&q=show+table+status">status</a>
  &#183;<a href="<?=$self?>?db=<?=$dbn?>&shex=1">export</a>
  &#183;<a href="<?=$self?>?db=<?=$dbn?>&shim=1">import</a>
 <? } ?>
@@ -575,14 +600,17 @@ function print_export(){
 
 function do_export(){
  global $DB;
- $t=$_REQUEST['t'];
+ $rt=$_REQUEST['t'];
+ $t=split(",",$rt);
+ $th=array_flip($t);
+ $ct=count($t);
 
  header('Content-type: text/plain');
- header("Content-Disposition: attachment; filename=\"$DB[db]".(($t)?".$t":"").".sql\"");
+ header("Content-Disposition: attachment; filename=\"$DB[db]".(($ct==1&&$t[0])?".$t[0]":(($ct>1)?'.'.$ct.'tables':'')).".sql\"");
 
- $sth=db_query("show tables from $DB[db]".(($t)?" like '".dbq($t)."'":""));
- while( $row=mysql_fetch_row($sth) ){
-   do_export_table($row[0],1);
+ $sth=db_query("show tables from $DB[db]");
+ while($row=mysql_fetch_row($sth)){
+   if (!$rt||array_key_exists($row[0],$th)) do_export_table($row[0],1);
  }
  exit;
 }
@@ -773,6 +801,23 @@ function do_one_sql($sql){
     return $last_sth;
  }
  return 1;
+}
+
+function do_sht(){
+ $cb=$_REQUEST['cb'];
+ switch ($_REQUEST['dosht']){
+  case 'exp': $_REQUEST['t']=join(",",$cb);print_export();exit;
+  case 'drop': $sq='DROP TABLE';break;
+  case 'trunc': $sq='TRUNCATE TABLE';break;
+  case 'opt': $sq='OPTIMIZE TABLE';break;
+ }
+ if ($sq && is_array($cb)){
+  foreach($cb as $v){
+   $sql.=$sq." $v;\n";
+  }
+  do_sql($sql);
+ }
+ do_sql('show tables');
 }
 
 ?>

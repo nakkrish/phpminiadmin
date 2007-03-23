@@ -21,7 +21,7 @@
  );
 
 //constants
- $VERSION='1.4.070315';
+ $VERSION='1.4.070323';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $self=$_SERVER['PHP_SELF'];
 
@@ -423,11 +423,15 @@ function get_identity($dbh1=NULL){
 }
 
 function get_db_select($sel=''){
+ global $DB;
  $result='';
  if ($_SESSION['sql_sd'] && !$_REQUEST['db']=='*'){//check cache
     $arr=$_SESSION['sql_sd'];
  }else{
-   $arr=db_array("show databases");
+   $arr=db_array("show databases",NULL,1);
+   if (!$arr){
+      $arr=array( 0 => array('Database' => $DB['db']) );
+    }
    $_SESSION['sql_sd']=$arr;
  }
 
@@ -533,6 +537,7 @@ function killmq($value){
 function savecfg(){
  $v=$_REQUEST['v'];
  $_SESSION['DB']=$v;
+ unset($_SESSION['sql_sd']);
 
  if ($_REQUEST['rmb']){
     $tm=time()+60*60*24*30;

@@ -21,7 +21,7 @@
  );
 
 //constants
- $VERSION='1.4.070323';
+ $VERSION='1.4.070327';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $self=$_SERVER['PHP_SELF'];
 
@@ -110,7 +110,6 @@
     print_cfg();
  }
 
-//**************** functions
 function do_sql($q){
  global $dbh,$last_sth,$last_sql,$reccount,$out_message,$SQLq;
  $SQLq=$q;
@@ -194,7 +193,7 @@ function print_header(){
  $dbn=$DB['db'];
 ?>
 <html>
-<head>
+<head><title>phpMiniAdmin</title>
 <style type="text/css">
 body,th,td{font-family:Arial,Helvetica,sans-serif;font-size:80%;padding:0px;margin:0px}
 div{padding:3px}
@@ -228,7 +227,7 @@ function chksql(){
  var F=document.DF;
  if(/^\s*(?:delete|drop|truncate|alter)/.test(F.q.value)) return ays();
 }
-<?if($is_sht){?>
+<?php if($is_sht){?>
 function chkall(cab){
  var e=document.DF.elements;
  if (e!=null){
@@ -239,35 +238,35 @@ function chkall(cab){
 function sht(f){
  document.DF.dosht.value=f;
 }
-<?}?>
+<?php }?>
 </script>
 
 </head>
 <body>
-<form method="post" name="DF" action="<?=$self?>" enctype="multipart/form-data">
+<form method="post" name="DF" action="<?php echo $self?>" enctype="multipart/form-data">
 <input type="hidden" name="refresh" value="">
 <input type="hidden" name="p" value="">
 
 <div class="inv">
-<a href="http://phpminiadmin.sourceforge.net/" target="_blank"><b>phpMiniAdmin <?=$VERSION?></b></a>
-<? if ($_SESSION['is_logged'] && $dbh){ ?>
+<a href="http://phpminiadmin.sourceforge.net/" target="_blank"><b>phpMiniAdmin <?php echo $VERSION?></b></a>
+<?php if ($_SESSION['is_logged'] && $dbh){ ?>
  | 
-Database: <select name="db" onChange="frefresh()"><option value='*'> - select/refresh -<?=get_db_select($dbn)?></select>
-<? if($dbn){ ?>
- &#183;<a href="<?=$self?>?db=<?=$dbn?>&q=show+tables">show tables</a>
- &#183;<a href="<?=$self?>?db=<?=$dbn?>&q=show+table+status">status</a>
- &#183;<a href="<?=$self?>?db=<?=$dbn?>&shex=1">export</a>
- &#183;<a href="<?=$self?>?db=<?=$dbn?>&shim=1">import</a>
-<? } ?>
+Database: <select name="db" onChange="frefresh()"><option value='*'> - select/refresh -<?php echo get_db_select($dbn)?></select>
+<?php if($dbn){ $z=" &#183;<a href='$self?db=$dbn"; ?>
+<?php echo $z?>&q=show+tables'>show tables</a>
+<?php echo $z?>&q=show+table+status'>status</a>
+<?php echo $z?>&shex=1'>export</a>
+<?php echo $z?>&shim=1'>import</a>
+<?php } ?>
  | <a href="?showcfg=1">Settings</a> 
-<?} ?>
-<?if ($GLOBALS['ACCESS_PWD']){?> | <a href="?logoff=1">Logoff</a> <?}?>
+<?php } ?>
+<?php if ($GLOBALS['ACCESS_PWD']){?> | <a href="?logoff=1">Logoff</a> <?php }?>
  | <a href="?phpinfo=1">phpinfo</a>
 </div>
 
-<div class="err"><?=$err_msg?></div>
+<div class="err"><?php echo $err_msg?></div>
 
-<?
+<?php
 }
 
 function print_screen(){
@@ -280,26 +279,26 @@ function print_screen(){
 <center>
 <div style="width:500px;" align="left">
 SQL-query (or many queries):<br />
-<textarea name="q" cols="70" rows="10"><?=$SQLq?></textarea>
+<textarea name="q" cols="70" rows="10"><?php echo $SQLq?></textarea>
 <input type=submit name="GoSQL" value="Go" onclick="return chksql()" style="width:100px">&nbsp;&nbsp;
 <input type=button name="Clear" value=" Clear " onClick="document.DF.q.value=''" style="width:100px">
 </div>
 </center>
 <hr />
 
-Records: <b><?=$reccount?></b> in <b><?=$time_all?></b> sec<br />
-<b><?=$out_message?></b>
+Records: <b><?php echo $reccount?></b> in <b><?php echo $time_all?></b> sec<br />
+<b><?php echo $out_message?></b>
 
 <hr />
-<?
+<?php
  if ($is_limited_sql && ($page || $reccount>=$MAX_ROWS_PER_PAGE) ){
   echo "<center>".make_List_Navigation($page, 10000, $MAX_ROWS_PER_PAGE, "javascript:go(%p%)")."</center>";
  }
 #$reccount
 ?>
-<?=$sqldr?>
+<?php echo $sqldr?>
 
-<?
+<?php
  print_footer();
 }
 
@@ -313,7 +312,7 @@ function print_footer(){
 <small>&copy; 2004-2007 Oleg Savchuk</small>
 </div>
 </body></html>
-<?
+<?php
 }
 
 function print_login(){
@@ -327,7 +326,7 @@ Password: <input type="password" name="pwd" value="">
 <input type="submit" value=" Login ">
 </div>
 </center>
-<?
+<?php
  print_footer();
 }
 
@@ -339,22 +338,22 @@ function print_cfg(){
 <center>
 <h3>DB Connection Settings</h3>
 <div class="frm">
-User name: <input type="text" name="v[user]" value="<?=$DB['user']?>"><br />
+User name: <input type="text" name="v[user]" value="<?php echo $DB['user']?>"><br />
 Password: <input type="password" name="v[pwd]" value=""><br />
-MySQL host: <input type="text" name="v[host]" value="<?=$DB['host']?>"> port: <input type="text" name="v[port]" value="<?=$DB['port']?>" size="4"><br />
-DB name: <input type="text" name="v[db]" value="<?=$DB['db']?>"><br />
-Charset: <select name="v[chset]"><option value="">- default -</option><?=chset_select($DB['chset'])?></select><br />
+MySQL host: <input type="text" name="v[host]" value="<?php echo $DB['host']?>"> port: <input type="text" name="v[port]" value="<?php echo $DB['port']?>" size="4"><br />
+DB name: <input type="text" name="v[db]" value="<?php echo $DB['db']?>"><br />
+Charset: <select name="v[chset]"><option value="">- default -</option><?php echo chset_select($DB['chset'])?></select><br />
 <input type="checkbox" name="rmb" value="1" checked> Remember in cookies for 30 days
 <input type="hidden" name="savecfg" value="1">
-<input type="submit" value=" Apply "><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
+<input type="submit" value=" Apply "><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
 </div>
 </center>
-<?
+<?php
  print_footer();
 }
 
 
-//******* utilities
+//* utilities
 function db_connect($nodie=0){
  global $dbh,$DB,$err_msg;
 
@@ -585,7 +584,7 @@ function loadsess(){
 function print_export(){
  global $self;
  $t=$_REQUEST['t'];
- $l=($t)?"Table `$t`":"DB";
+ $l=($t)?"Table `$t`":"whole DB";
  print_header();
 ?>
 <center>
@@ -593,38 +592,63 @@ function print_export(){
 <div class="frm">
 <input type="checkbox" name="s" value="1" checked> Structure<br />
 <input type="checkbox" name="d" value="1" checked> Data<br />
+<input type="radio" name="et" value="" checked> .sql
+<?php if ($t && !strpos($t,',')){?>
+ <input type="radio" name="et" value="csv"> .csv (data only and for one table only)
+<?php }?><br />
 <input type="hidden" name="doex" value="1">
 <input type="hidden" name="t" value="<?php echo $t?>">
-<input type="submit" value=" Download "><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
+<input type="submit" value=" Download "><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
 </div>
 </center>
-<?
+<?php
  print_footer();
  exit;
 }
 
 function do_export(){
- global $DB;
+ global $DB,$VERSION;
  $rt=$_REQUEST['t'];
  $t=split(",",$rt);
  $th=array_flip($t);
  $ct=count($t);
+ $z=db_array("show variables like 'max_allowed_packet'");
+ $MAXI=floor($z[0]['Value']*0.8);
+ if(!$MAXI)$MAXI=838860;
+
+ if ($ct==1&&$_REQUEST['et']=='csv'){
+  header('Content-type: text/csv');
+  header("Content-Disposition: attachment; filename=\"$t[0].csv\"");
+
+  $csv_data="First Name,Last Name,Email,ClickBank ID,Registered\n";
+  $sth=db_query("select * from `$t[0]`");
+  $fn=mysql_num_fields($sth);
+  for($i=0;$i<$fn;$i++){
+   $m=mysql_fetch_field($sth,$i);
+   echo qstr($m->name).(($i<$fn-1)?",":"");
+  }
+  echo "\n";
+  while($row=mysql_fetch_row($sth)){
+   echo to_csv_row($row);
+  }
+  exit;
+ }
 
  header('Content-type: text/plain');
  header("Content-Disposition: attachment; filename=\"$DB[db]".(($ct==1&&$t[0])?".$t[0]":(($ct>1)?'.'.$ct.'tables':'')).".sql\"");
+ echo "-- phpMiniAdmin dump $VERSION\n-- Datetime: ".date('Y-m-d H:i:s')."\n-- Host: $DB[host]\n-- Database: $DB[db]\n\n/*!40030 SET max_allowed_packet=$MAXI */;\n\n";
 
  $sth=db_query("show tables from $DB[db]");
  while($row=mysql_fetch_row($sth)){
-   if (!$rt||array_key_exists($row[0],$th)) do_export_table($row[0],1);
+   if (!$rt||array_key_exists($row[0],$th)) do_export_table($row[0],1,$MAXI);
  }
  exit;
 }
 
-function do_export_table($t='',$isvar=0){
+function do_export_table($t='',$isvar=0,$MAXI=838860){
  set_time_limit(600);
- $MAXI=838860;
 
- if ($_REQUEST['s']){
+ if($_REQUEST['s']){
   $sth=db_query("show create table `$t`");
   $row=mysql_fetch_row($sth);
   echo "DROP TABLE IF EXISTS `$t`;\n$row[1];\n\n";
@@ -659,10 +683,10 @@ function print_import(){
 <div class="frm">
 .sql file: <input type="file" name="file1" value="" size=40><br />
 <input type="hidden" name="doim" value="1">
-<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?=$self?>'">
+<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
 </div>
 </center>
-<?
+<?php
  print_footer();
  exit;
 }
@@ -811,10 +835,10 @@ function do_one_sql($sql){
 function do_sht(){
  $cb=$_REQUEST['cb'];
  switch ($_REQUEST['dosht']){
-  case 'exp': $_REQUEST['t']=join(",",$cb);print_export();exit;
-  case 'drop': $sq='DROP TABLE';break;
-  case 'trunc': $sq='TRUNCATE TABLE';break;
-  case 'opt': $sq='OPTIMIZE TABLE';break;
+  case 'exp':$_REQUEST['t']=join(",",$cb);print_export();exit;
+  case 'drop':$sq='DROP TABLE';break;
+  case 'trunc':$sq='TRUNCATE TABLE';break;
+  case 'opt':$sq='OPTIMIZE TABLE';break;
  }
  if ($sq && is_array($cb)){
   foreach($cb as $v){
@@ -824,5 +848,19 @@ function do_sht(){
  }
  do_sql('show tables');
 }
+
+function to_csv_row($adata){
+ $r='';
+ foreach ($adata as $a){
+   $r.=(($r)?",":"").qstr($a);
+ }
+ return $r."\n";
+}
+function qstr($s){
+ $s=nl2br($s);
+ $s=str_replace('"','""',$s);
+ return '"'.$s.'"';
+}
+
 
 ?>

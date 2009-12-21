@@ -1,8 +1,7 @@
 <?php
 /*
  PHP Mini MySQL Admin
- (c) 2004-2007 Oleg Savchuk <osa@viakron.com>
- Charset support - thanks to Alex Didok http://www.main.com.ua
+ (c) 2004-2009 Oleg Savchuk <osa@viakron.com>
 
  Light standalone PHP script for easy access MySQL databases.
  http://phpminiadmin.sourceforge.net
@@ -11,18 +10,21 @@
  $ACCESS_PWD=''; #script access password, SET IT if you want to protect script from public access
 
  #DEFAULT db connection settings
+ # --- WARNING! --- if you set defaults - always recommended to set $ACCESS_PWD to protect your db!
  $DB=array(
  'user'=>"",#required
  'pwd'=>"", #required
  'db'=>"",  #default DB, optional
  'host'=>"",#optional
  'port'=>"",#optional
- 'chset'=>"",#default charset, optional
+ 'chset'=>"utf8",#default charset, optional
  );
 
 //constants
- $VERSION='1.4.080217';
+ $VERSION='1.5.091221';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
+ $D="\r\n"; #default delimiter for export
+
  $self=$_SERVER['PHP_SELF'];
 
  session_start();
@@ -98,9 +100,15 @@
        do_import();
       }elseif ($_REQUEST['dosht']){
        do_sht();
-      }elseif (!$_REQUEST['refresh'] || preg_match('/^select|show|explain|desc/',$SQLq) ) do_sql($SQLq);#perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
+      }elseif (!$_REQUEST['refresh'] || preg_match('/^select|show|explain|desc/i',$SQLq) ) do_sql($SQLq);#perform non-selet SQL only if not refresh (to avoid dangerous delete/drop)
      }else{
-        $err_msg="Select DB first";
+        if ( $_REQUEST['refresh'] ){
+           do_sql('show databases');
+        }elseif ( preg_match('/^show\s+(?:databases|status|variables)/i',$SQLq) ){
+           do_sql($SQLq);
+        }else{
+           $err_msg="Select Database first";
+        }
      }
     }
     $time_all=ceil((microtime_float()-$time_start)*10000)/10000;
@@ -138,6 +146,7 @@ function display_select($sth,$q){
  $dbn=$DB['db'];
  $sqldr='';
 
+ $is_shd=(preg_match('/^show databases/i',$q));
  $is_sht=(preg_match('/^show tables/i',$q));
  $is_show_crt=(preg_match('/^show create table/i',$q));
 
@@ -145,7 +154,17 @@ function display_select($sth,$q){
  $fields_num=mysql_num_fields($sth);
  
  $w="width='100%' ";
- if ($is_sht) {$w='';
+ if ($is_sht || $is_shd) {$w='';
+   $sqldr.="<div class='dot'>
+&nbsp;MySQL Server:
+&nbsp;&#183;<a href='?db=$dbn&q=show+variables'>Show Configuration Variables</a>
+&nbsp;&#183;<a href='?db=$dbn&q=show+status'>Show Statistics</a>
+&nbsp;&#183;<a href='?db=$dbn&q=show+processlist'>Show Processlist</a>
+<br/>";
+   if ($is_sht) $sqldr.="&nbsp;Database:&nbsp;&#183;<a href='?db=$dbn&q=show+table+status'>Show status</a>";
+   $sqldr.="</div>";
+ }
+ if ($is_sht){
    $abtn="&nbsp;<input type='submit' value='Export' onclick=\"sht('exp')\">
  <input type='submit' value='Drop' onclick=\"if(ays()){sht('drop')}else{return false}\">
  <input type='submit' value='Truncate' onclick=\"if(ays()){sht('tunc')}else{return false}\">
@@ -153,6 +172,7 @@ function display_select($sth,$q){
  <b>selected tables</b>";
    $sqldr.=$abtn."<input type='hidden' name='dosht' value=''>";
  }
+
  $sqldr.="<table border='0' cellpadding='1' cellspacing='1' $w class='res'>";
  $headers="<tr class='h'>";
  if ($is_sht) $headers.="<td><input type='checkbox' name='cball' value='' onclick='chkall(this)'></td>";
@@ -160,31 +180,39 @@ function display_select($sth,$q){
     $meta=mysql_fetch_field($sth,$i);
     $headers.="<th>".$meta->name."</th>";
  }
+ if ($is_shd) $headers.="<th>show create database</th><th>show table status</th><th>show triggers</th>";
  if ($is_sht) $headers.="<th>show create table</th><th>explain</th><th>indexes</th><th>export</th><th>drop</th><th>truncate</th><th>optimize</th><th>repair</th>";
  $headers.="</tr>\n";
  $sqldr.=$headers;
  $swapper=false;
  while($row=mysql_fetch_row($sth)){
-   $sqldr.="<tr class='".$rc[$swp=!$swp]."'>";
+   $sqldr.="<tr class='".$rc[$swp=!$swp]."' onmouseover='tmv(this)' onmouseout='tmo(this)' onclick='tc(this)'>";
    for($i=0;$i<$fields_num;$i++){
       $v=$row[$i];$more='';
       if ($is_sht && $i==0 && $v){
-         $v="<input type='checkbox' name='cb[]' value=\"$v\"></td>"
-         ."<td><a href=\"?db=$dbn&q=select+*+from+$v\">$v</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&q=show+create+table+$v\">sct</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&q=explain+$v\">exp</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&q=show+index+from+$v\">ind</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&shex=1&t=$v\">e</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&q=drop+table+$v\" onclick='return ays()'>drop</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&q=truncate+table+$v\" onclick='return ays()'>trunc</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&q=optimize+table+$v\" onclick='return ays()'>opt</a></td>"
-         ."<td>&#183;<a href=\"?db=$dbn&q=repair+table+$v\" onclick='return ays()'>rpr</a>";
+         $vq='`'.$v.'`';
+         $v="<input type='checkbox' name='cb[]' value=\"$vq\"></td>"
+         ."<td><a href=\"?db=$dbn&q=select+*+from+$vq\">$v</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=show+create+table+$vq\">sct</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=explain+$vq\">exp</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=show+index+from+$vq\">ind</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&shex=1&t=$vq\">export</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=drop+table+$vq\" onclick='return ays()'>dr</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=truncate+table+$vq\" onclick='return ays()'>tr</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=optimize+table+$vq\" onclick='return ays()'>opt</a></td>"
+         ."<td>&#183;<a href=\"?db=$dbn&q=repair+table+$vq\" onclick='return ays()'>rpr</a>";
+      }elseif ($is_shd && $i==0 && $v){
+         $v="<a href=\"?db=$v&q=show+tables\">$v</a></td>"
+         ."<td><a href=\"?db=$v&q=show+create+database+`$v`\">sct</a></td>"
+         ."<td><a href=\"?db=$v&q=show+table+status\">status</a></td>"
+         ."<td><a href=\"?db=$v&q=show+triggers\">trig</a></td>"
+         ;
       }else{
-       if ($v==NULL) $v="NULL";
+       if (is_null($v)) $v="NULL";
        $v=htmlspecialchars($v);
       }
       if ($is_show_crt) $v="<pre>$v</pre>";
-      $sqldr.="<td>$v".(!$v?"<br />":'')."</td>";
+      $sqldr.="<td>$v".(!strlen($v)?"<br />":'')."</td>";
    }
    $sqldr.="</tr>\n";
  }
@@ -196,22 +224,28 @@ function print_header(){
  global $err_msg,$VERSION,$DB,$dbh,$self,$is_sht;
  $dbn=$DB['db'];
 ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
 <html>
 <head><title>phpMiniAdmin</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 <style type="text/css">
 body,th,td{font-family:Arial,Helvetica,sans-serif;font-size:80%;padding:0px;margin:0px}
 div{padding:3px}
 .inv{background-color:#006699;color:#FFFFFF}
 .inv a{color:#FFFFFF}
+table.res th, table.res td{padding:2px}
 table.res tr{vertical-align:top}
 tr.e{background-color:#CCCCCC}
 tr.o{background-color:#EEEEEE}
 tr.h{background-color:#9999CC}
+tr.s{background-color:#FFFF99}
 .err{color:#FF3333;font-weight:bold;text-align:center}
 .frm{width:400px;border:1px solid #999999;background-color:#eeeeee;text-align:left}
+.dot{border-bottom:1px dotted #000}
 </style>
 
 <script type="text/javascript">
+function $(i){return document.getElementById(i)}
 function frefresh(){
  var F=document.DF;
  F.method='get';
@@ -231,6 +265,19 @@ function chksql(){
  var F=document.DF;
  if(/^\s*(?:delete|drop|truncate|alter)/.test(F.q.value)) return ays();
 }
+function tmv(tr){
+ tr.sc=tr.className;
+ tr.className='h';
+}
+function tmo(tr){
+ tr.className=tr.sc;
+}
+function tc(tr){
+ tr.className='s';
+ tr.sc='s';
+}
+function after_load(){
+}
 <?php if($is_sht){?>
 function chkall(cab){
  var e=document.DF.elements;
@@ -246,7 +293,7 @@ function sht(f){
 </script>
 
 </head>
-<body>
+<body onload="after_load()">
 <form method="post" name="DF" action="<?php echo $self?>" enctype="multipart/form-data">
 <input type="hidden" name="refresh" value="">
 <input type="hidden" name="p" value="">
@@ -255,7 +302,7 @@ function sht(f){
 <a href="http://phpminiadmin.sourceforge.net/" target="_blank"><b>phpMiniAdmin <?php echo $VERSION?></b></a>
 <?php if ($_SESSION['is_logged'] && $dbh){ ?>
  | 
-Database: <select name="db" onChange="frefresh()"><option value='*'> - select/refresh -<?php echo get_db_select($dbn)?></select>
+<a href="?q=show+databases">Databases</a>: <select name="db" onChange="frefresh()"><option value='*'> - select/refresh -</option><option value=''> - show all -</option><?php echo get_db_select($dbn)?></select>
 <?php if($dbn){ $z=" &#183;<a href='$self?db=$dbn"; ?>
 <?php echo $z?>&q=show+tables'>show tables</a>
 <?php echo $z?>&q=show+table+status'>status</a>
@@ -280,20 +327,18 @@ function print_screen(){
 
 ?>
 
-<center>
-<div style="width:500px;" align="left">
-SQL-query (or many queries):<br />
-<textarea name="q" cols="70" rows="10"><?php echo $SQLq?></textarea>
+<div class="dot" style="padding:0 0 5px 20px">
+SQL-query (or many queries separated by ";"):<br />
+<textarea name="q" cols="70" rows="10" style="width:98%"><?php echo $SQLq?></textarea><br/>
 <input type=submit name="GoSQL" value="Go" onclick="return chksql()" style="width:100px">&nbsp;&nbsp;
 <input type=button name="Clear" value=" Clear " onClick="document.DF.q.value=''" style="width:100px">
 </div>
-</center>
-<hr />
 
+<div class="dot" style="padding:5px 0 5px 20px">
 Records: <b><?php echo $reccount?></b> in <b><?php echo $time_all?></b> sec<br />
 <b><?php echo $out_message?></b>
+</div>
 
-<hr />
 <?php
  if ($is_limited_sql && ($page || $reccount>=$MAX_ROWS_PER_PAGE) ){
   echo "<center>".make_List_Navigation($page, 10000, $MAX_ROWS_PER_PAGE, "javascript:go(%p%)")."</center>";
@@ -309,11 +354,11 @@ Records: <b><?php echo $reccount?></b> in <b><?php echo $time_all?></b> sec<br /
 function print_footer(){
 ?>
 </form>
-<br>
-<br>
+<br/>
+<br/>
 
 <div align="right">
-<small>&copy; 2004-2007 Oleg Savchuk</small>
+<small>&copy; 2004-2009 Oleg Savchuk</small>
 </div>
 </body></html>
 <?php
@@ -409,16 +454,20 @@ function db_query($sql, $dbh1=NULL, $skiperr=0){
  return $sth;
 }
 
-function db_array($sql, $dbh1=NULL, $skiperr=0){#array of rows
+function db_array($sql, $dbh1=NULL, $skiperr=0, $isnum=0){#array of rows
  $sth=db_query($sql, $dbh1, $skiperr);
  if (!$sth) return;
  $res=array();
- while($row=mysql_fetch_assoc($sth)) $res[]=$row;
+ if ($isnum){
+   while($row=mysql_fetch_row($sth)) $res[]=$row;
+ }else{
+   while($row=mysql_fetch_assoc($sth)) $res[]=$row;
+ }
  return $res;
 }
 
 function catch_db_err($dbh, $sth, $sql=""){
- if (!$sth) die("Error in DB operation:<br>\n".mysql_error($dbh)."<br>\n$sql");
+ if (!$sth) die("Error in DB operation:<br/>\n".mysql_error($dbh)."<br/>\n$sql");
 }
 
 function get_identity($dbh1=NULL){
@@ -456,6 +505,7 @@ function chset_select($sel=''){
 
 function sel($arr,$n,$sel=''){
  foreach($arr as $a){
+   echo $a[0];#???
    $b=$a[$n];
    $res.="<option value='$b' ".($sel && $sel==$b?'selected':'').">$b</option>";
  }
@@ -512,7 +562,7 @@ function make_List_Navigation($pg, $all, $PP, $ptpl, $show_all=''){
     $pname=pen($sp+5,$ptpl);
     $res.="<a href='$pname'>$w[1]</a>";       
   }
-  $res.=" <br>\n";
+  $res.=" <br/>\n";
 
   if($pg>0){
     $pname=pen($pg-1,$ptpl);
@@ -589,18 +639,21 @@ function loadsess(){
 function print_export(){
  global $self;
  $t=$_REQUEST['t'];
- $l=($t)?"Table `$t`":"whole DB";
+ $l=($t)?"Table $t":"whole DB";
  print_header();
 ?>
 <center>
 <h3>Export <?php echo $l?></h3>
 <div class="frm">
 <input type="checkbox" name="s" value="1" checked> Structure<br />
-<input type="checkbox" name="d" value="1" checked> Data<br />
-<input type="radio" name="et" value="" checked> .sql
+<input type="checkbox" name="d" value="1" checked> Data<br /><br />
+<input type="radio" name="et" value="" checked> .sql<br />
 <?php if ($t && !strpos($t,',')){?>
- <input type="radio" name="et" value="csv"> .csv (data only and for one table only)
-<?php }?><br />
+ <input type="radio" name="et" value="csv"> .csv (Excel style, data only and for one table only)
+<?php }else{?>
+&nbsp;( ) .csv <small>(to export as csv - go to 'show tables' and export just ONE table)</small>
+<?php }?>
+<br /><br />
 <input type="hidden" name="doex" value="1">
 <input type="hidden" name="t" value="<?php echo $t?>">
 <input type="submit" value=" Download "><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
@@ -612,7 +665,7 @@ function print_export(){
 }
 
 function do_export(){
- global $DB,$VERSION;
+ global $DB,$VERSION,$D;
  $rt=$_REQUEST['t'];
  $t=split(",",$rt);
  $th=array_flip($t);
@@ -625,7 +678,6 @@ function do_export(){
   header('Content-type: text/csv');
   header("Content-Disposition: attachment; filename=\"$t[0].csv\"");
 
-  $csv_data="First Name,Last Name,Email,ClickBank ID,Registered\n";
   $sth=db_query("select * from `$t[0]`");
   $fn=mysql_num_fields($sth);
   for($i=0;$i<$fn;$i++){
@@ -641,41 +693,42 @@ function do_export(){
 
  header('Content-type: text/plain');
  header("Content-Disposition: attachment; filename=\"$DB[db]".(($ct==1&&$t[0])?".$t[0]":(($ct>1)?'.'.$ct.'tables':'')).".sql\"");
- echo "-- phpMiniAdmin dump $VERSION\n-- Datetime: ".date('Y-m-d H:i:s')."\n-- Host: $DB[host]\n-- Database: $DB[db]\n\n/*!40030 SET max_allowed_packet=$MAXI */;\n\n";
+ echo "-- phpMiniAdmin dump $VERSION$D-- Datetime: ".date('Y-m-d H:i:s')."$D-- Host: $DB[host]$D-- Database: $DB[db]$D$D";
+ echo "/*!40030 SET NAMES $DB[chset] */;$D/*!40030 SET GLOBAL max_allowed_packet=16777216 */;$D$D";
 
- $sth=db_query("show tables from $DB[db]");
+ $sth=db_query("show tables from `$DB[db]`");
  while($row=mysql_fetch_row($sth)){
    if (!$rt||array_key_exists($row[0],$th)) do_export_table($row[0],1,$MAXI);
  }
 
- echo "\n-- phpMiniAdmin dump end\n";
+ echo "$D-- phpMiniAdmin dump end$D";
  exit;
 }
 
 function do_export_table($t='',$isvar=0,$MAXI=838860){
+ global $D;
  set_time_limit(600);
 
  if($_REQUEST['s']){
   $sth=db_query("show create table `$t`");
   $row=mysql_fetch_row($sth);
-  echo "DROP TABLE IF EXISTS `$t`;\n$row[1];\n\n";
+  echo "DROP TABLE IF EXISTS `$t`;\n$row[1];$D$D";
  }
 
  if ($_REQUEST['d']){
   $exsql='';
-  echo "/*!40000 ALTER TABLE `$t` DISABLE KEYS */;\n";
+  echo "/*!40000 ALTER TABLE `$t` DISABLE KEYS */;$D";
   $sth=db_query("select * from `$t`");
   while($row=mysql_fetch_row($sth)){
     $values='';
     foreach($row as $v) $values.=(($values)?',':'').dbq($v);
     $exsql.=(($exsql)?',':'')."(".$values.")";
     if (strlen($exsql)>$MAXI) {
-       echo "INSERT INTO `$t` VALUES $exsql;\n";$exsql='';
+       echo "INSERT INTO `$t` VALUES $exsql;$D";$exsql='';
     }
   }
-  if ($exsql) echo "INSERT INTO `$t` VALUES $exsql;\n";
-  echo "/*!40000 ALTER TABLE `$t` ENABLE KEYS */;\n";
-  echo "\n";
+  if ($exsql) echo "INSERT INTO `$t` VALUES $exsql;$D";
+  echo "/*!40000 ALTER TABLE `$t` ENABLE KEYS */;$D$D";
  }
  flush();
 }
@@ -692,6 +745,31 @@ function print_import(){
 <input type="hidden" name="doim" value="1">
 <input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
 </div>
+<br /><br /><br />
+<!--
+<h3>Import one Table from CSV</h3>
+<div class="frm">
+.csv file (Excel style): <input type="file" name="file2" value="" size=40><br />
+<input type="checkbox" name="r1" value="1" checked> first row contain field names<br/>
+<small>(note: for success, field names should be exactly the same as in DB)</small><br />
+Character set of the file: <select name="chset"><?php echo chset_select('utf8')?></select>
+<br/><br/>
+Import into:<br/>
+<input type="radio" name="tt" value="1" checked="checked"> existing table:
+ <select name="t">
+ <option value=''>- select -</option>
+ <?php echo sel(db_array('show tables',NULL,0,1), 0, ''); ?>
+</select>
+<div style="margin-left:20px">
+ <input type="checkbox" name="ttr" value="1"> replace existing DB data<br />
+ <input type="checkbox" name="tti" value="1"> ignore duplicate rows
+</div>
+<input type="radio" name="tt" value="2"> create new table with name <input type="text" name="tn" value="" size="20">
+<br /><br />
+<input type="hidden" name="doimcsv" value="1">
+<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
+</div>
+-->
 </center>
 <?php
  print_footer();

@@ -22,7 +22,7 @@
  date_default_timezone_set('UTC');#required by PHP 5.1+
 
 //constants
- $VERSION='1.6.110426';
+ $VERSION='1.7.110429';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $D="\r\n"; #default delimiter for export
  $BOM=chr(239).chr(187).chr(191);
@@ -94,7 +94,7 @@
     $time_start=microtime_float();
    
     if ($_REQUEST['phpinfo']){
-       ob_start();phpinfo();$sqldr=ob_get_clean();
+       ob_start();phpinfo();$sqldr='<div style="font-size:130%">'.ob_get_clean().'</div>';
     }else{
      if ($DB['db']){
       if ($_REQUEST['shex']){
@@ -236,13 +236,15 @@ function print_header(){
  global $err_msg,$VERSION,$DB,$dbh,$self,$is_sht,$xurl;
  $dbn=$DB['db'];
 ?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
 <html>
 <head><title>phpMiniAdmin</title>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 <style type="text/css">
-body,th,td{font-family:Arial,Helvetica,sans-serif;font-size:80%;padding:0px;margin:0px}
+body{font-family:Arial,Helvetica,sans-serif;font-size:80%;padding:0px;margin:0px}
+th,td{padding:0px;margin:0px}
 div{padding:3px}
+pre{font-size:125%}
 .inv{background-color:#006699;color:#FFFFFF}
 .inv a{color:#FFFFFF}
 table.res th, table.res td{padding:2px}
@@ -351,15 +353,15 @@ SQL-query (or many queries separated by ";"):<br />
 Records: <b><?php echo $reccount?></b> in <b><?php echo $time_all?></b> sec<br />
 <b><?php echo $out_message?></b>
 </div>
-
+<div class="sqldr">
 <?php
  if ($is_limited_sql && ($page || $reccount>=$MAX_ROWS_PER_PAGE) ){
   echo "<center>".make_List_Navigation($page, 10000, $MAX_ROWS_PER_PAGE, "javascript:go(%p%)")."</center>";
  }
 #$reccount
-?>
-<?php echo $sqldr?>
 
+ echo $sqldr?>
+</div>
 <?php
  print_footer();
 }
@@ -651,7 +653,7 @@ function loadsess(){
 }
 
 function print_export(){
- global $self;
+ global $self,$xurl,$DB;
  $t=$_REQUEST['t'];
  $l=($t)?"Table $t":"whole DB";
  print_header();
@@ -668,9 +670,11 @@ function print_export(){
 &nbsp;( ) .csv <small>(to export as csv - go to 'show tables' and export just ONE table)</small>
 <?php }?>
 <br /><br />
+<label><input type="checkbox" name="gz" value="1"> compress as .gz</label><br />
+<br />
 <input type="hidden" name="doex" value="1">
 <input type="hidden" name="t" value="<?php echo $t?>">
-<input type="submit" value=" Download "><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
+<input type="submit" value=" Download "><input type="button" value=" Cancel " onclick="window.location='<?php echo $self.'?'.$xurl.'&db='.$DB['db']?>'">
 </div>
 </center>
 <?php
@@ -679,7 +683,7 @@ function print_export(){
 }
 
 function do_export(){
- global $DB,$VERSION,$D,$BOM;
+ global $DB,$VERSION,$D,$BOM,$ex_isgz;
  $rt=str_replace('`','',$_REQUEST['t']);
  $t=explode(",",$rt);
  $th=array_flip($t);
@@ -687,36 +691,41 @@ function do_export(){
  $z=db_array("show variables like 'max_allowed_packet'");
  $MAXI=floor($z[0]['Value']*0.8);
  if(!$MAXI)$MAXI=838860;
+ $aext='';$ctp='';
+
+ $ex_isgz=($_REQUEST['gz'])?1:0;
+ if ($ex_isgz) {
+    $aext='.gz';$ctp='application/x-gzip';
+ }
+ ex_start();
 
  if ($ct==1&&$_REQUEST['et']=='csv'){
-  header('Content-type: text/csv');
-  header("Content-Disposition: attachment; filename=\"$t[0].csv\"");
-  if ($DB['chset']=='utf8') echo $BOM;
+  ex_hdr($ctp?$ctp:'text/csv',"$t[0].csv$aext");
+  if ($DB['chset']=='utf8') ex_end($BOM);
 
   $sth=db_query("select * from `$t[0]`");
   $fn=mysql_num_fields($sth);
   for($i=0;$i<$fn;$i++){
    $m=mysql_fetch_field($sth,$i);
-   echo qstr($m->name).(($i<$fn-1)?",":"");
+   ex_w(qstr($m->name).(($i<$fn-1)?",":""));
   }
-  echo $D;
-  while($row=mysql_fetch_row($sth)){
-   echo to_csv_row($row);
-  }
+  ex_w($D);
+  while($row=mysql_fetch_row($sth)) ex_w(to_csv_row($row));
+  ex_end();
   exit;
  }
 
- header('Content-type: text/plain');
- header("Content-Disposition: attachment; filename=\"$DB[db]".(($ct==1&&$t[0])?".$t[0]":(($ct>1)?'.'.$ct.'tables':'')).".sql\"");
- echo "-- phpMiniAdmin dump $VERSION$D-- Datetime: ".date('Y-m-d H:i:s')."$D-- Host: $DB[host]$D-- Database: $DB[db]$D$D";
- echo "/*!40030 SET NAMES $DB[chset] */;$D/*!40030 SET GLOBAL max_allowed_packet=16777216 */;$D$D";
+ ex_hdr($ctp?$ctp:'text/plain',"$DB[db]".(($ct==1&&$t[0])?".$t[0]":(($ct>1)?'.'.$ct.'tables':'')).".sql$aext");
+ ex_w("-- phpMiniAdmin dump $VERSION$D-- Datetime: ".date('Y-m-d H:i:s')."$D-- Host: $DB[host]$D-- Database: $DB[db]$D$D");
+ ex_w("/*!40030 SET NAMES $DB[chset] */;$D/*!40030 SET GLOBAL max_allowed_packet=16777216 */;$D$D");
 
  $sth=db_query("show tables from `$DB[db]`");
  while($row=mysql_fetch_row($sth)){
    if (!$rt||array_key_exists($row[0],$th)) do_export_table($row[0],1,$MAXI);
  }
 
- echo "$D-- phpMiniAdmin dump end$D";
+ ex_w("$D-- phpMiniAdmin dump end$D");
+ ex_end();
  exit;
 }
 
@@ -728,38 +737,64 @@ function do_export_table($t='',$isvar=0,$MAXI=838860){
   $sth=db_query("show create table `$t`");
   $row=mysql_fetch_row($sth);
   $ct=preg_replace("/\n\r|\r\n|\n|\r/",$D,$row[1]);
-  echo "DROP TABLE IF EXISTS `$t`;$D$ct;$D$D";
+  ex_w("DROP TABLE IF EXISTS `$t`;$D$ct;$D$D");
  }
 
  if ($_REQUEST['d']){
   $exsql='';
-  echo "/*!40000 ALTER TABLE `$t` DISABLE KEYS */;$D";
+  ex_w("/*!40000 ALTER TABLE `$t` DISABLE KEYS */;$D");
   $sth=db_query("select * from `$t`");
   while($row=mysql_fetch_row($sth)){
     $values='';
     foreach($row as $v) $values.=(($values)?',':'').dbq($v);
     $exsql.=(($exsql)?',':'')."(".$values.")";
     if (strlen($exsql)>$MAXI) {
-       echo "INSERT INTO `$t` VALUES $exsql;$D";$exsql='';
+       ex_w("INSERT INTO `$t` VALUES $exsql;$D");$exsql='';
     }
   }
-  if ($exsql) echo "INSERT INTO `$t` VALUES $exsql;$D";
-  echo "/*!40000 ALTER TABLE `$t` ENABLE KEYS */;$D$D";
+  if ($exsql) ex_w("INSERT INTO `$t` VALUES $exsql;$D");
+  ex_w("/*!40000 ALTER TABLE `$t` ENABLE KEYS */;$D$D");
  }
  flush();
 }
 
+function ex_hdr($ct,$fn){
+ header("Content-type: $ct");
+ header("Content-Disposition: attachment; filename=\"$fn\"");
+}
+function ex_start(){
+ global $ex_isgz,$ex_gz,$ex_tmpf;
+ if ($ex_isgz){
+    $ex_tmpf=tempnam(sys_get_temp_dir(),'pma').'.gz';
+    if (!($ex_gz=gzopen($ex_tmpf,'wb9'))) die("Error trying to create gz tmp file");
+ }
+}
+function ex_w($s){
+ global $ex_isgz,$ex_gz;
+ if ($ex_isgz){
+    gzwrite($ex_gz,$s,strlen($s));
+ }else{
+    echo $s;
+ }
+}
+function ex_end(){
+ global $ex_isgz,$ex_gz,$ex_tmpf;
+ if ($ex_isgz){
+    gzclose($ex_gz);
+    readfile($ex_tmpf);
+ }
+}
 
 function print_import(){
- global $self;
+ global $self,$xurl,$DB;
  print_header();
 ?>
 <center>
 <h3>Import DB</h3>
 <div class="frm">
-.sql file: <input type="file" name="file1" value="" size=40><br />
+<b>.sql</b> or <b>.gz</b> file: <input type="file" name="file1" value="" size=40><br />
 <input type="hidden" name="doim" value="1">
-<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
+<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php echo $self.'?'.$xurl.'&db='.$DB['db']?>'">
 </div>
 <br /><br /><br />
 <!--
@@ -794,16 +829,29 @@ Import into:<br/>
 
 function do_import(){
  global $err_msg,$out_message,$dbh;
+ $err_msg='';
+ $F=$_FILES['file1'];
 
- if ($_FILES['file1'] && $_FILES['file1']['name']){
-  $filename=$_FILES['file1']['tmp_name'];
-  if (!do_multi_sql('', $filename) ){
-     $err_msg="Error: ".mysql_error($dbh);
-  }else{
-     $out_message='Import done successfully';
-     do_sql('show tables');
-     return;
+ if ($F && $F['name']){
+  $filename=$F['tmp_name'];
+  $pi=pathinfo($F['name']);
+  if ($pi['extension']!='sql'){//if not sql - assume .gz
+     $tmpf=tempnam(sys_get_temp_dir(),'pma');
+     if (($gz=gzopen($filename,'rb')) && ($tf=fopen($tmpf,'wb'))){
+        while(!gzeof($gz)){
+           if (fwrite($tf,gzread($gz,8192),8192)===FALSE){$err_msg='Error during gz file extraction to tmp file';break;}
+        }//extract to tmp file
+        gzclose($gz);fclose($tf);$filename=$tmpf;
+     }else{$err_msg='Error opening gz file';}
   }
+  if (!$err_msg){
+   if (!do_multi_sql('', $filename)){
+      $err_msg='Import Error: '.mysql_error($dbh);
+   }else{
+      $out_message='Import done successfully';
+      do_sql('show tables');
+      return;
+  }}
  }else{
   $err_msg="Error: Please select file first";
  }

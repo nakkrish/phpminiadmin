@@ -1,7 +1,7 @@
 <?php
 /*
  PHP Mini MySQL Admin
- (c) 2004-2012 Oleg Savchuk <osalabs@gmail.com> http://osalabs.com
+ (c) 2004-2014 Oleg Savchuk <osalabs@gmail.com> http://osalabs.com
 
  Light standalone PHP script for quick and easy access MySQL databases.
  http://phpminiadmin.sourceforge.net
@@ -21,13 +21,14 @@
  'port'=>"",#optional
  'chset'=>"utf8",#optional, default charset
  );
- date_default_timezone_set('UTC');#required by PHP 5.1+
+if (function_exists('date_default_timezone_set')) date_default_timezone_set('UTC');#required by PHP 5.1+
 
 //constants
- $VERSION='1.8.120514';
+ $VERSION='1.9.140405';
  $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
  $D="\r\n"; #default delimiter for export
  $BOM=chr(239).chr(187).chr(191);
+ $SHOW_D="SHOW DATABASES";
  $SHOW_T="SHOW TABLE STATUS";
  $DB=array(); #working copy for DB settings
 
@@ -116,12 +117,14 @@
       }
      }else{
         if ( $_REQUEST['refresh'] ){
-           check_xss();do_sql('show databases');
-        }elseif ( preg_match('/^show\s+(?:databases|status|variables|process)/i',$SQLq) ){
+           check_xss();do_sql($SHOW_D);
+        }elseif ($_REQUEST['crdb']){
+          check_xss();do_sql('CREATE DATABASE `'.$_REQUEST['new_db'].'`');do_sql($SHOW_D);
+        }elseif ( preg_match('/^(?:show\s+(?:databases|status|variables|process)|create\s+database|grant\s+)/i',$SQLq) ){
            check_xss();do_sql($SQLq);
         }else{
            $err_msg="Select Database first";
-           if (!$SQLq) do_sql("show databases");
+           if (!$SQLq) do_sql($SHOW_D);
         }
      }
     }
@@ -176,8 +179,9 @@ function display_select($sth,$q){
 &nbsp;MySQL Server:
 &nbsp;&#183;<a href='$url&q=show+variables'>Show Configuration Variables</a>
 &nbsp;&#183;<a href='$url&q=show+status'>Show Statistics</a>
-&nbsp;&#183;<a href='$url&q=show+processlist'>Show Processlist</a>
-<br>";
+&nbsp;&#183;<a href='$url&q=show+processlist'>Show Processlist</a>";
+   if ($is_shd) $sqldr.="&nbsp;&#183;Create new database: <input type='text' name='new_db' placeholder='type db name here'> <input type='submit' name='crdb' value='Create'>";
+   $sqldr.="<br>";
    if ($is_sht) $sqldr.="&nbsp;Database:&nbsp;&#183;<a href='$url&q=show+table+status'>Show Table Status</a>";
    $sqldr.="</div>";
  }
@@ -204,7 +208,7 @@ function display_select($sth,$q){
  $sqldr.=$headers;
  $swapper=false;
  while($row=mysql_fetch_row($sth)){
-   $sqldr.="<tr class='".$rc[$swp=!$swp]."' onmouseover='tmv(this)' onmouseout='tmo(this)' onclick='tc(this)'>";
+   $sqldr.="<tr class='".$rc[$swp=!$swp]."' onclick='tc(this)'>";
    for($i=0;$i<$fields_num;$i++){
       $v=$row[$i];$more='';
       if ($is_sht && $v){
@@ -228,13 +232,19 @@ function display_select($sth,$q){
       }elseif ($is_shd && $i==0 && $v){
          $url='?'.$xurl."&db=$v";
          $v="<a href=\"$url&q=SHOW+TABLE+STATUS\">$v</a></td>"
-         ."<td><a href=\"$url&q=show+create+database+`$v`\">sct</a></td>"
+         ."<td><a href=\"$url&q=show+create+database+`$v`\">scd</a></td>"
          ."<td><a href=\"$url&q=show+table+status\">status</a></td>"
          ."<td><a href=\"$url&q=show+triggers\">trig</a></td>"
          ;
       }else{
        if (is_null($v)) $v="NULL";
-       $v=htmlspecialchars($v);
+       elseif (preg_match('/[\x00-\x09\x0B\x0C\x0E-\x1F]+/',$v)) { #all chars <32, except \n\r(0D0A)
+        $vl=strlen($v);$pf='';
+        if ($vl>16 && $fields_num>1){#show full dump if just one field
+          $v=substr($v, 0, 16);$pf='...';
+        }
+        $v='BINARY: '.chunk_split(strtoupper(bin2hex($v)),2,' ').$pf;
+       }else $v=htmlspecialchars($v);
       }
       if ($is_show_crt) $v="<pre>$v</pre>";
       $sqldr.="<td>$v".(!strlen($v)?"<br>":'')."</td>";
@@ -264,10 +274,11 @@ pre{font-size:125%}
 .inv a{color:#FFF}
 table.res{width:100%;border-collapse:collapse;}
 table.wa{width:auto}
-table.res th,table.res td{padding:2px;border:1px solid #fff}
+table.res th,table.res td{padding:2px;border:1px solid #fff;vertical-align: top}
 table.restr{vertical-align:top}
 tr.e{background-color:#CCC}
 tr.o{background-color:#EEE}
+tr.e:hover, tr.o:hover {background-color:#FF9}
 tr.h{background-color:#99C}
 tr.s{background-color:#FF9}
 .err{color:#F33;font-weight:bold;text-align:center}
@@ -313,16 +324,13 @@ function chksql(){
  }
  return true;
 }
-function tmv(tr){
- tr.sc=tr.className;
- tr.className='h';
-}
-function tmo(tr){
- tr.className=tr.sc;
-}
 function tc(tr){
- tr.className='s';
- tr.sc='s';
+ if (tr.className=='s'){
+  tr.className=tr.classNameX;
+ }else{
+  tr.classNameX=tr.className;
+  tr.className='s';
+ }
 }
 function lschk(skip){
  if (!localStorage || !skip && !localStorage[LSKX]) return false;
@@ -356,6 +364,8 @@ function q_next(){
  $('q').value=ls[LSK+qcur];
 }
 function after_load(){
+ var p=document.DF.pwd;
+ if (p) p.focus();
  qcur=lsmax();
 }
 function logoff(){
@@ -388,27 +398,28 @@ function sht(f){
 
 </head>
 <body onload="after_load()">
-<form method="post" name="DF" action="<?php echo $self?>" enctype="multipart/form-data">
-<input type="hidden" name="XSS" value="<?php echo $_SESSION['XSS']?>">
+<form method="post" name="DF" action="<?php eo($self)?>" enctype="multipart/form-data">
+<input type="hidden" name="XSS" value="<?php eo($_SESSION['XSS'])?>">
 <input type="hidden" name="refresh" value="">
 <input type="hidden" name="p" value="">
 
 <div class="inv">
-<a href="http://phpminiadmin.sourceforge.net/" target="_blank"><b>phpMiniAdmin <?php echo $VERSION?></b></a>
+<a href="http://phpminiadmin.sourceforge.net/" target="_blank"><b>phpMiniAdmin <?php eo($VERSION)?></b></a>
 <?php if ($_SESSION['is_logged'] && $dbh){ ?>
- | <a href="?<?php echo $xurl?>&q=show+databases">Databases</a>: <select name="db" onChange="frefresh()"><option value='*'> - select/refresh -</option><option value=''> - show all -</option><?php echo get_db_select($dbn)?></select>
-<?php if($dbn){ $z=" &#183; <a href='$self?$xurl&db=$dbn"; ?>
+ | <a href="?<?php eo($xurl)?>&q=show+databases">Databases</a>: <select name="db" onChange="frefresh()"><option value='*'> - select/refresh -</option><option value=''> - show all -</option>
+<?php echo get_db_select($dbn)?></select>
+<?php if($dbn){ $z=" &#183; <a href='".hs($self."?$xurl&db=$dbn"); ?>
 <?php echo $z.'&q='.urlencode($SHOW_T)?>'>show tables</a>
 <?php echo $z?>&shex=1'>export</a>
 <?php echo $z?>&shim=1'>import</a>
 <?php } ?>
  | <a href="?showcfg=1">Settings</a>
 <?php } ?>
-<?php if ($GLOBALS['ACCESS_PWD']){?> | <a href="?<?php echo $xurl?>&logoff=1" onclick="logoff()">Logoff</a> <?php }?>
+<?php if ($GLOBALS['ACCESS_PWD']){?> | <a href="?<?php eo($xurl)?>&logoff=1" onclick="logoff()">Logoff</a> <?php }?>
  | <a href="?phpinfo=1">phpinfo</a>
 </div>
 
-<div class="err"><?php echo $err_msg?></div>
+<div class="err"><?php eo($err_msg)?></div>
 
 <?php
 }
@@ -426,14 +437,14 @@ function print_screen(){
 
 <div class="dot" style="padding:0 0 5px 20px">
 SQL-query (or multiple queries separated by ";"):&nbsp;<button type="button" class="qnav" onclick="q_prev()">&lt;</button><button type="button" class="qnav" onclick="q_next()">&gt;</button><br>
-<textarea id="q" name="q" cols="70" rows="10" style="width:98%"><?php echo $SQLq?></textarea><br>
+<textarea id="q" name="q" cols="70" rows="10" style="width:98%"><?php eo($SQLq)?></textarea><br>
 <input type="submit" name="GoSQL" value="Go" onclick="return chksql()" style="width:100px">&nbsp;&nbsp;
 <input type="button" name="Clear" value=" Clear " onclick="document.DF.q.value=''" style="width:100px">
 </div>
 
 <div class="dot" style="padding:5px 0 5px 20px">
-Records: <b><?php echo $reccount?></b> in <b><?php echo $time_all?></b> sec<br>
-<b><?php echo $out_message?></b>
+Records: <b><?php eo($reccount)?></b> in <b><?php eo($time_all)?></b> sec<br>
+<b><?php eo($out_message)?></b>
 </div>
 <div class="sqldr">
 <?php echo $nav.$sqldr.$nav; ?>
@@ -445,9 +456,7 @@ Records: <b><?php echo $reccount?></b> in <b><?php echo $time_all?></b> sec<br>
 function print_footer(){
 ?>
 </form>
-<div class="ft">
-&copy; 2004-2012 <a href="http://osalabs.com" target="_blank">Oleg Savchuk</a>
-</div>
+<div class="ft">&copy; 2004-2014 <a href="http://osalabs.com" target="_blank">Oleg Savchuk</a></div>
 </body></html>
 <?php
 }
@@ -475,18 +484,18 @@ function print_cfg(){
 <center>
 <h3>DB Connection Settings</h3>
 <div class="frm">
-<label class="l">DB user name:</label><input type="text" name="v[user]" value="<?php echo $DB['user']?>"><br>
+<label class="l">DB user name:</label><input type="text" name="v[user]" value="<?php eo($DB['user'])?>"><br>
 <label class="l">Password:</label><input type="password" name="v[pwd]" value=""><br>
 <div style="text-align:right"><a href="#" class="ajax" onclick="cfg_toggle()">advanced settings</a></div>
 <div id="cfg-adv" style="display:none;">
-<label class="l">DB name:</label><input type="text" name="v[db]" value="<?php echo $DB['db']?>"><br>
-<label class="l">MySQL host:</label><input type="text" name="v[host]" value="<?php echo $DB['host']?>"> port: <input type="text" name="v[port]" value="<?php echo $DB['port']?>" size="4"><br>
+<label class="l">DB name:</label><input type="text" name="v[db]" value="<?php eo($DB['db'])?>"><br>
+<label class="l">MySQL host:</label><input type="text" name="v[host]" value="<?php eo($DB['host'])?>"> port: <input type="text" name="v[port]" value="<?php eo($DB['port'])?>" size="4"><br>
 <label class="l">Charset:</label><select name="v[chset]"><option value="">- default -</option><?php echo chset_select($DB['chset'])?></select><br>
 <br><input type="checkbox" name="rmb" value="1" checked> Remember in cookies for 30 days
 </div>
 <center>
 <input type="hidden" name="savecfg" value="1">
-<input type="submit" value=" Apply "><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
+<input type="submit" value=" Apply "><input type="button" value=" Cancel " onclick="window.location='<?php eo($self)?>'">
 </center>
 </div>
 </center>
@@ -576,11 +585,11 @@ function get_identity($dbh1=NULL){
 }
 
 function get_db_select($sel=''){
- global $DB;
+ global $DB,$SHOW_D;
  if (is_array($_SESSION['sql_sd']) && $_REQUEST['db']!='*'){//check cache
     $arr=$_SESSION['sql_sd'];
  }else{
-   $arr=db_array("show databases",NULL,1);
+   $arr=db_array($SHOW_D,NULL,1);
    if (!is_array($arr)){
       $arr=array( 0 => array('Database' => $DB['db']) );
     }
@@ -745,7 +754,7 @@ function print_export(){
  print_header();
 ?>
 <center>
-<h3>Export <?php echo $l?></h3>
+<h3>Export <?php eo($l)?></h3>
 <div class="frm">
 <input type="checkbox" name="s" value="1" checked> Structure<br>
 <input type="checkbox" name="d" value="1" checked> Data<br><br>
@@ -761,8 +770,8 @@ function print_export(){
 <div><label><input type="checkbox" name="gz" value="1"> compress as .gz</label></div>
 <br>
 <input type="hidden" name="doex" value="1">
-<input type="hidden" name="t" value="<?php echo $t?>">
-<input type="submit" value=" Download "><input type="button" value=" Cancel " onclick="window.location='<?php echo $self.'?'.$xurl.'&db='.$DB['db']?>'">
+<input type="hidden" name="t" value="<?php eo($t)?>">
+<input type="submit" value=" Download "><input type="button" value=" Cancel " onclick="window.location='<?php eo($self.'?'.$xurl.'&db='.$DB['db'])?>'">
 </div>
 </center>
 <?php
@@ -789,7 +798,7 @@ function do_export(){
 
  if ($ct==1&&$_REQUEST['et']=='csv'){
   ex_hdr($ctp?$ctp:'text/csv',"$t[0].csv$aext");
-  if ($DB['chset']=='utf8') ex_end($BOM);
+  if ($DB['chset']=='utf8') ex_w($BOM);
 
   $sth=db_query("select * from `$t[0]`");
   $fn=mysql_num_fields($sth);
@@ -853,7 +862,7 @@ function ex_hdr($ct,$fn){
 function ex_start(){
  global $ex_isgz,$ex_gz,$ex_tmpf;
  if ($ex_isgz){
-    $ex_tmpf=tempnam(sys_get_temp_dir(),'pma').'.gz';
+    $ex_tmpf=tmp_name().'.gz';
     if (!($ex_gz=gzopen($ex_tmpf,'wb9'))) die("Error trying to create gz tmp file");
  }
 }
@@ -870,6 +879,7 @@ function ex_end(){
  if ($ex_isgz){
     gzclose($ex_gz);
     readfile($ex_tmpf);
+    unlink($ex_tmpf);
  }
 }
 
@@ -882,7 +892,7 @@ function print_import(){
 <div class="frm">
 <b>.sql</b> or <b>.gz</b> file: <input type="file" name="file1" value="" size=40><br>
 <input type="hidden" name="doim" value="1">
-<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php echo $self.'?'.$xurl.'&db='.$DB['db']?>'">
+<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php eo($self.'?'.$xurl.'&db='.$DB['db'])?>'">
 </div>
 <br><br><br>
 <!--
@@ -906,7 +916,7 @@ Import into:<br>
 <input type="radio" name="tt" value="2"> create new table with name <input type="text" name="tn" value="" size="20">
 <br><br>
 <input type="hidden" name="doimcsv" value="1">
-<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php echo $self?>'">
+<input type="submit" value=" Upload and Import " onclick="return ays()"><input type="button" value=" Cancel " onclick="window.location='<?php eo($self)?>'">
 </div>
 -->
 </center>
@@ -924,7 +934,7 @@ function do_import(){
   $filename=$F['tmp_name'];
   $pi=pathinfo($F['name']);
   if ($pi['extension']!='sql'){//if not sql - assume .gz
-     $tmpf=tempnam(sys_get_temp_dir(),'pma');
+     $tmpf=tmp_name();
      if (($gz=gzopen($filename,'rb')) && ($tf=fopen($tmpf,'wb'))){
         while(!gzeof($gz)){
            if (fwrite($tf,gzread($gz,8192),8192)===FALSE){$err_msg='Error during gz file extraction to tmp file';break;}
@@ -1072,6 +1082,7 @@ function do_sht(){
  global $SHOW_T;
  $cb=$_REQUEST['cb'];
  if (!is_array($cb)) $cb=array();
+ $sql='';
  switch ($_REQUEST['dosht']){
   case 'exp':$_REQUEST['t']=join(",",$cb);print_export();exit;
   case 'drop':$sq='DROP TABLE';break;
@@ -1079,12 +1090,11 @@ function do_sht(){
   case 'opt':$sq='OPTIMIZE TABLE';break;
  }
  if ($sq){
-  $sql='';
   foreach($cb as $v){
    $sql.=$sq." $v;\n";
   }
-  if ($sql) do_sql($sql);
  }
+ if ($sql) do_sql($sql);
  do_sql($SHOW_T);
 }
 
@@ -1119,7 +1129,28 @@ function check_xss(){
 }
 
 function rw($s){#for debug
- echo $s."<br>\n";
+ echo hs($s)."<br>\n";
 }
 
+function tmp_name() {
+  if ( function_exists('sys_get_temp_dir')) return tempnam(sys_get_temp_dir(),'pma');
+
+  if( !($temp=getenv('TMP')) )
+    if( !($temp=getenv('TEMP')) )
+      if( !($temp=getenv('TMPDIR')) ) {
+        $temp=tempnam(__FILE__,'');
+        if (file_exists($temp)) {
+          unlink($temp);
+          $temp=dirname($temp);
+        }
+      }
+  return $temp ? tempnam($temp,'pma') : null;
+}
+
+function hs($s){
+  return htmlspecialchars($s, ENT_COMPAT|ENT_HTML401,'UTF-8');
+}
+function eo($s){//echo+escape
+  echo hs($s);
+}
 ?>
